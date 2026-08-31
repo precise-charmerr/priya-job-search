@@ -26,6 +26,13 @@ per-file diff commands.
 
 ### Fixed
 
+- **Placeholder-integrity tests in `python-tests` now skip on forks** (#405) - the dedicated
+  `placeholder-integrity` job already gates on the upstream repo name, but `python-tests` ran
+  `unittest discover` with no such guard, so forks that personalized files via `/setup` failed
+  three sentinel checks permanently. Both test classes now use `@unittest.skipIf` on
+  `GITHUB_REPOSITORY` (defaulting to upstream when unset so local pristine-template runs still
+  execute).
+
 - **The `documents/interview/**` ignore rule no longer claims interview prep is written there**
   (#336). `/interview` saves its pack to
   `documents/applications/<company>_<role>/interview_prep_<stage>.md`, already ignored by
