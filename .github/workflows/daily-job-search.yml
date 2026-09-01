@@ -1,0 +1,26 @@
+name: Job Search Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  search-jobs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Search jobs
+        run: |
+          bun run .agents/skills/linkedin-search/cli/src/cli.ts search \
+            --query "Java Spring Boot" \
+            --location "India" \
+            --jobage 7 \
+            --limit 5 \
+            --format table
