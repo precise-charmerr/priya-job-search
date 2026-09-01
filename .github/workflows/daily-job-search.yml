@@ -200,7 +200,7 @@ jobs:
           print(f"Detailed jobs collected: {len(detailed)}")
           PY
 
-      - name: Create ranked report
+            - name: Create ranked report
         run: |
           python - <<'PY'
           import json
@@ -242,10 +242,19 @@ jobs:
               for x in profile["locations"].get("priority_2", [])
           ]
 
+          priority_3 = [
+              x.lower()
+              for x in profile["locations"].get("priority_3", [])
+          ]
+
           avoid = [
               x.lower()
               for x in profile.get("avoid_or_low_priority", [])
           ]
+
+          # ------------------------------------------------------------
+          # Experience extraction
+          # ------------------------------------------------------------
 
           def extract_experience_range(text):
               patterns = [
@@ -254,37 +263,29 @@ jobs:
                   r'(\d+(?:\.\d+)?)\s*(?:years?|yrs?)',
               ]
 
-              ranges = []
-
               for pattern in patterns:
-                  for match in re.finditer(
+                  match = re.search(
                       pattern,
                       text,
                       flags=re.IGNORECASE,
-                  ):
-                      if match.lastindex == 2:
-                          low = float(match.group(1))
-                          high = float(match.group(2))
-                          ranges.append((low, high))
-                      else:
-                          low = float(match.group(1))
+                  )
 
-                          if "+" in match.group(0):
-                              ranges.append((low, None))
-                          else:
-                              ranges.append((low, low))
+                  if not match:
+                      continue
 
-              if not ranges:
-                  return None
-
-              for low, high in ranges:
-                  if high is not None or "+" in text[
-                      max(0, text.find(str(int(low))) - 5):
-                      text.find(str(int(low))) + 20
-                  ]:
+                  if match.lastindex == 2:
+                      low = float(match.group(1))
+                      high = float(match.group(2))
                       return low, high
 
-              return ranges[0]
+                  low = float(match.group(1))
+
+                  if "+" in match.group(0):
+                      return low, None
+
+                  return low, low
+
+              return None
 
           def experience_score(text):
               result = extract_experience_range(text)
@@ -294,22 +295,42 @@ jobs:
 
               minimum, maximum = result
 
+              # 3 years is the target experience.
+              # Reward roles that naturally include the user's experience.
               if maximum is None:
                   if experience_years >= minimum:
-                      return 8, f"Experience: {minimum:g}+ years (meets)"
-                  elif minimum - experience_years <= 1:
-                      return 2, f"Experience: {minimum:g}+ years (slight stretch)"
-                  elif minimum - experience_years <= 2:
-                      return -8, f"Experience: {minimum:g}+ years (stretch)"
-                  else:
-                      return -18, f"Experience: {minimum:g}+ years (mismatch)"
+                      return 10, (
+                          f"Experience: {minimum:g}+ years "
+                          "(strong fit)"
+                      )
 
+                  gap = minimum - experience_years
+
+                  if gap <= 1:
+                      return 3, (
+                          f"Experience: {minimum:g}+ years "
+                          "(slight stretch)"
+                      )
+
+                  if gap <= 2:
+                      return -5, (
+                          f"Experience: {minimum:g}+ years "
+                          "(stretch)"
+                      )
+
+                  return -15, (
+                      f"Experience: {minimum:g}+ years "
+                      "(major stretch)"
+                  )
+
+              # User's experience falls inside the requested range.
               if minimum <= experience_years <= maximum:
-                  return 10, (
+                  return 12, (
                       f"Experience: {minimum:g}–{maximum:g} years "
                       "(strong fit)"
                   )
 
+              # Job asks for slightly more experience.
               if experience_years < minimum:
                   gap = minimum - experience_years
 
@@ -318,38 +339,116 @@ jobs:
                           f"Experience: {minimum:g}–{maximum:g} years "
                           "(slight stretch)"
                       )
-                  elif gap <= 2:
-                      return -6, (
+
+                  if gap <= 2:
+                      return -4, (
                           f"Experience: {minimum:g}–{maximum:g} years "
                           "(stretch)"
                       )
-                  else:
-                      return -18, (
-                          f"Experience: {minimum:g}–{maximum:g} years "
-                          "(mismatch)"
-                      )
 
-              return 6, (
+                  return -15, (
+                      f"Experience: {minimum:g}–{maximum:g} years "
+                      "(major stretch)"
+                  )
+
+              # Job's range is below the user's experience.
+              return 8, (
                   f"Experience: {minimum:g}–{maximum:g} years "
                   "(meets/exceeds)"
               )
 
+          # ------------------------------------------------------------
+          # Role classification
+          # ------------------------------------------------------------
+
+          strong_backend_titles = [
+              "java backend",
+              "java developer",
+              "java engineer",
+              "spring boot",
+              "backend engineer",
+              "backend developer",
+              "software engineer",
+              "software developer",
+              "microservices engineer",
+          ]
+
+          seniority_penalties = [
+              ("architect", -15),
+              ("principal", -12),
+              ("staff engineer", -10),
+              ("lead", -8),
+              ("technical lead", -8),
+              ("vice president", -15),
+              ("vp", -15),
+              ("director", -20),
+              ("head of", -20),
+          ]
+
+          def classify_role(title):
+              title_lower = title.lower()
+
+              # Strongly preferred backend roles.
+              if any(
+                  term in title_lower
+                  for term in [
+                      "java backend",
+                      "backend engineer",
+                      "backend developer",
+                      "java developer",
+                      "java engineer",
+                      "spring boot",
+                      "microservices engineer",
+                  ]
+              ):
+                  return "backend"
+
+              # Generic software engineering role.
+              if any(
+                  term in title_lower
+                  for term in [
+                      "software engineer",
+                      "software developer",
+                  ]
+              ):
+                  return "software"
+
+              # Fullstack is acceptable but lower priority.
+              if "fullstack" in title_lower or "full stack" in title_lower:
+                  return "fullstack"
+
+              return "other"
+
+          # ------------------------------------------------------------
+          # Score jobs
+          # ------------------------------------------------------------
+
           def score_job(job):
-              title = job.get("title", "")
+              title = job.get("title", "") or ""
               description = job.get("description", "") or ""
+              location = job.get("location", "") or ""
+
+              title_lower = title.lower()
+              location_lower = location.lower()
 
               text = f"{title} {description}".lower()
-              title_lower = title.lower()
 
               score = 0
               reasons = []
 
+              # --------------------------------------------------------
+              # Core technical skills
+              # --------------------------------------------------------
+
               core_matches = [
-                  skill for skill in core
+                  skill
+                  for skill in core
                   if skill in text
               ]
 
-              score += min(len(core_matches) * 5, 40)
+              # Cap core skills so keyword-heavy descriptions
+              # don't completely dominate the ranking.
+              score += min(len(core_matches) * 4, 32)
 
               if core_matches:
                   reasons.append(
@@ -357,11 +456,17 @@ jobs:
                       + ", ".join(core_matches[:7])
                   )
 
+              # --------------------------------------------------------
+              # Secondary / AI skills
+              # --------------------------------------------------------
+
               secondary_matches = [
-                  skill for skill in secondary
+                  skill
+                  for skill in secondary
                   if skill in text
               ]
 
+              # AI/RAG/etc. is a bonus, not the main ranking factor.
               score += min(len(secondary_matches) * 1.5, 8)
 
               if secondary_matches:
@@ -370,125 +475,282 @@ jobs:
                       + ", ".join(secondary_matches[:5])
                   )
 
+              # --------------------------------------------------------
+              # Role fit
+              # --------------------------------------------------------
+
+              role_type = classify_role(title)
+
+              if role_type == "backend":
+                  score += 22
+                  reasons.append("Strong backend role")
+
+              elif role_type == "software":
+                  score += 16
+                  reasons.append("Target software-engineering role")
+
+              elif role_type == "fullstack":
+                  score += 8
+                  reasons.append("Fullstack role")
+
+              else:
+                  # Generic/non-target role.
+                  score += 2
+
+              # Exact target-role title match gets a small additional
+              # bonus without overpowering experience/location.
               role_matches = [
-                  role for role in target_roles
+                  role
+                  for role in target_roles
                   if role in title_lower
               ]
 
-              backend_terms = [
-                  "backend",
-                  "back end",
-                  "java developer",
-                  "java engineer",
-                  "spring boot",
-                  "microservices",
-              ]
-
-              backend_matches = [
-                  term for term in backend_terms
-                  if term in title_lower
-              ]
-
               if role_matches:
-                  score += 17
-                  reasons.append("Target role")
-              elif backend_matches:
-                  score += 12
-                  reasons.append("Strong backend role")
+                  score += 5
+
+              # --------------------------------------------------------
+              # Experience
+              # --------------------------------------------------------
 
               exp_points, exp_reason = experience_score(text)
               score += exp_points
               reasons.append(exp_reason)
 
-              location = job.get("location", "").lower()
+              # --------------------------------------------------------
+              # Location
+              # --------------------------------------------------------
 
-              if any(x in location for x in priority_1):
-                  score += 15
+              if any(
+                  x in location_lower
+                  for x in priority_1
+              ):
+                  score += 20
                   reasons.append("Priority location")
-              elif any(x in location for x in priority_2):
-                  score += 10
+
+              elif any(
+                  x in location_lower
+                  for x in priority_2
+              ):
+                  score += 12
                   reasons.append("Preferred location")
-              elif (
-                  "remote" in location
-                  and "remote india" in [
-                      x.lower()
-                      for x in profile["locations"].get(
-                          "priority_3", []
-                      )
-                  ]
+
+              elif any(
+                  x in location_lower
+                  for x in priority_3
               ):
                   score += 7
-                  reasons.append("Remote option")
+                  reasons.append("Secondary location")
+
+              # --------------------------------------------------------
+              # Seniority penalties
+              # --------------------------------------------------------
+
+              for term, penalty in seniority_penalties:
+                  if term in title_lower:
+                      score += penalty
+                      reasons.append(
+                          f"Seniority adjustment: {term}"
+                      )
+                      break
+
+              # --------------------------------------------------------
+              # Explicitly unwanted roles
+              # --------------------------------------------------------
 
               matched_avoid = [
-                  term for term in avoid
+                  term
+                  for term in avoid
                   if term in title_lower
               ]
 
               if matched_avoid:
-                  score -= 25
+                  score -= 30
                   reasons.append(
-                      "Possible role mismatch: "
+                      "Low-priority role: "
                       + ", ".join(matched_avoid[:3])
                   )
 
-              return (
-                  max(0, min(round(score), 100)),
-                  reasons,
+              # --------------------------------------------------------
+              # Additional title-level penalties
+              # --------------------------------------------------------
+
+              if "frontend" in title_lower:
+                  score -= 30
+                  reasons.append("Frontend role")
+
+              if "ui developer" in title_lower:
+                  score -= 30
+                  reasons.append("UI role")
+
+              if "web designer" in title_lower:
+                  score -= 35
+                  reasons.append("Design role")
+
+              if "manual tester" in title_lower:
+                  score -= 35
+                  reasons.append("Testing role")
+
+              if "qa tester" in title_lower:
+                  score -= 35
+                  reasons.append("Testing role")
+
+              if "devops engineer" in title_lower:
+                  score -= 25
+                  reasons.append("DevOps role")
+
+              # --------------------------------------------------------
+              # Final score
+              # --------------------------------------------------------
+
+              final_score = max(
+                  0,
+                  min(round(score), 100)
               )
 
-          ranked = []
+              # --------------------------------------------------------
+              # Bucket
+              # --------------------------------------------------------
 
-          for job in data.get("results", []):
-              score, reasons = score_job(job)
+              # High priority requires both a good score and a sensible
+              # role/experience combination.
+              if (
+                  final_score >= 70
+                  and role_type in ("backend", "software")
+                  and not any(
+                      term in title_lower
+                      for term in [
+                          "architect",
+                          "principal",
+                          "director",
+                          "vice president",
+                          "vp",
+                      ]
+                  )
+              ):
+                  bucket = "🔥 HIGH PRIORITY"
 
-              ranked.append({
-                  "score": score,
-                  "title": job.get("title", ""),
+              elif final_score >= 58:
+                  bucket = "🟢 GOOD MATCH"
+
+              elif final_score >= 45:
+                  bucket = "🟡 STRETCH"
+
+              else:
+                  bucket = "🔴 LOW PRIORITY"
+
+              return {
+                  "score": final_score,
+                  "bucket": bucket,
+                  "title": title,
                   "company": job.get("company", ""),
-                  "location": job.get("location", ""),
+                  "location": location,
                   "date": job.get("date", ""),
                   "url": job.get("url", ""),
                   "job_id": job.get("id", ""),
                   "reasons": reasons,
-              })
+              }
+
+          # ------------------------------------------------------------
+          # Rank everything
+          # ------------------------------------------------------------
+
+          ranked = []
+
+          for job in data.get("results", []):
+              ranked.append(score_job(job))
+
+          # Bucket order first, then score.
+          bucket_order = {
+              "🔥 HIGH PRIORITY": 0,
+              "🟢 GOOD MATCH": 1,
+              "🟡 STRETCH": 2,
+              "🔴 LOW PRIORITY": 3,
+          }
 
           ranked.sort(
-              key=lambda x: x["score"],
-              reverse=True,
+              key=lambda x: (
+                  bucket_order.get(x["bucket"], 9),
+                  -x["score"],
+              )
           )
+
+          # ------------------------------------------------------------
+          # Create report
+          # ------------------------------------------------------------
 
           report = [
               f"# Daily Job Report — {date.today()}",
               "",
               f"**Jobs found:** {len(ranked)}",
               "",
-              "## 🔥 Top Matches",
+              "**Priority:** Pune / Gurugram / Noida → "
+              "Bengaluru / Hyderabad → Other / Remote",
+              "",
+              "**Experience target:** 3 years",
               "",
           ]
 
-          for i, job in enumerate(ranked[:30], 1):
+          bucket_descriptions = {
+              "🔥 HIGH PRIORITY": (
+                  "Strong Java/backend fit with good experience and/or "
+                  "priority location. **Apply first.**"
+              ),
+              "🟢 GOOD MATCH": (
+                  "Good overall fit. **Apply after High Priority jobs.**"
+              ),
+              "🟡 STRETCH": (
+                  "Potentially useful, but has a meaningful "
+                  "experience/role/location stretch."
+              ),
+              "🔴 LOW PRIORITY": (
+                  "Weak fit, excessive seniority, or unwanted role. "
+                  "**Usually skip.**"
+              ),
+          }
+
+          for bucket in [
+              "🔥 HIGH PRIORITY",
+              "🟢 GOOD MATCH",
+              "🟡 STRETCH",
+              "🔴 LOW PRIORITY",
+          ]:
+              bucket_jobs = [
+                  job
+                  for job in ranked
+                  if job["bucket"] == bucket
+              ]
+
               report.extend([
-                  f"### {i}. {job['title']}",
-                  (
-                      f"**{job['company']}** — "
-                      f"{job['location']}"
-                  ),
-                  (
-                      f"**Match score: "
-                      f"{job['score']}/100**"
-                  ),
+                  f"## {bucket}",
                   "",
-                  "**Why:** "
-                  + (
-                      "; ".join(job["reasons"])
-                      if job["reasons"]
-                      else "Limited information available"
-                  ),
+                  bucket_descriptions[bucket],
                   "",
-                  f"**Apply:** {job['url']}",
+                  f"**Jobs in this bucket:** {len(bucket_jobs)}",
                   "",
               ])
+
+              for index, job in enumerate(bucket_jobs, 1):
+                  report.extend([
+                      f"### {index}. {job['title']}",
+                      (
+                          f"**{job['company']}** — "
+                          f"{job['location']}"
+                      ),
+                      (
+                          f"**Match score: "
+                          f"{job['score']}/100**"
+                      ),
+                      "",
+                      "**Why:** "
+                      + (
+                          "; ".join(job["reasons"])
+                          if job["reasons"]
+                          else "Limited information available"
+                      ),
+                      "",
+                      f"**Apply:** {job['url']}",
+                      "",
+                  ])
 
           Path("jobs/daily-report.md").write_text(
               "\n".join(report)
