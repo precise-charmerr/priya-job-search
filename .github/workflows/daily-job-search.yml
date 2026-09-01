@@ -2,6 +2,8 @@ name: Daily Job Search
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "30 3 * * *"
 
 jobs:
   search-jobs:
@@ -16,6 +18,9 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Create jobs directory
+        run: mkdir -p jobs
+
       - name: Search Pune
         run: |
           echo "===== PUNE ====="
@@ -24,7 +29,7 @@ jobs:
             --location "Pune, Maharashtra, India" \
             --jobage 7 \
             --limit 5 \
-            --format table
+            --format json > jobs/pune.json
 
       - name: Search Gurugram
         run: |
@@ -34,7 +39,17 @@ jobs:
             --location "Gurugram, Haryana, India" \
             --jobage 7 \
             --limit 5 \
-            --format table
+            --format json > jobs/gurugram.json
+
+      - name: Search Noida
+        run: |
+          echo "===== NOIDA ====="
+          bun run .agents/skills/linkedin-search/cli/src/cli.ts search \
+            --query "Java Spring Boot" \
+            --location "Noida, Uttar Pradesh, India" \
+            --jobage 7 \
+            --limit 5 \
+            --format json > jobs/noida.json
 
       - name: Search Bengaluru
         run: |
@@ -44,7 +59,7 @@ jobs:
             --location "Bengaluru, Karnataka, India" \
             --jobage 7 \
             --limit 5 \
-            --format table
+            --format json > jobs/bengaluru.json
 
       - name: Search Hyderabad
         run: |
@@ -54,14 +69,46 @@ jobs:
             --location "Hyderabad, Telangana, India" \
             --jobage 7 \
             --limit 5 \
-            --format table
+            --format json > jobs/hyderabad.json
 
-      - name: Search Remote India
+      - name: Combine results
         run: |
-          echo "===== REMOTE ====="
-          bun run .agents/skills/linkedin-search/cli/src/cli.ts search \
-            --query "Java Spring Boot" \
-            --location "Remote" \
-            --jobage 7 \
-            --limit 5 \
-            --format table
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          jobs = []
+
+          for file in Path("jobs").glob("*.json"):
+              if file.name == "all.json":
+                  continue
+
+              try:
+                  data = json.loads(file.read_text())
+                  if isinstance(data, list):
+                      jobs.extend(data)
+                  elif isinstance(data, dict):
+                      jobs.append(data)
+              except Exception as e:
+                  print(f"Could not read {file}: {e}")
+
+          # Deduplicate by job ID
+          unique = {}
+          for job in jobs:
+              job_id = str(job.get("id", job.get("job_id", "")))
+              if job_id:
+                  unique[job_id] = job
+
+          Path("jobs/all.json").write_text(
+              json.dumps(list(unique.values()), indent=2)
+          )
+
+          print(f"Total unique jobs: {len(unique)}")
+          PY
+
+      - name: Upload job results
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-job-results
+          path: jobs/
+          retention-days: 30
