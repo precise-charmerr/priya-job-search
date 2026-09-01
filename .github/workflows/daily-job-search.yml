@@ -165,6 +165,7 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import re
           from pathlib import Path
           from datetime import date
 
@@ -176,60 +177,179 @@ jobs:
               Path("jobs/detailed.json").read_text()
           )
 
+          # -----------------------------
+          # Profile
+          # -----------------------------
+          target_roles = [
+              x.lower() for x in profile.get("target_roles", [])
+          ]
+
           core = [
-              skill.lower()
-              for skill in profile["core_skills"]
+              x.lower() for x in profile.get("core_skills", [])
           ]
 
           secondary = [
-              skill.lower()
-              for skill in profile["secondary_skills"]
+              x.lower() for x in profile.get("secondary_skills", [])
           ]
 
+          experience_years = float(
+              profile.get("experience_years", 0)
+          )
+
           priority_1 = [
-              "pune",
-              "gurugram",
-              "gurgaon",
-              "noida"
+              x.lower()
+              for x in profile["locations"].get("priority_1", [])
           ]
 
           priority_2 = [
-              "bengaluru",
-              "bangalore",
-              "hyderabad"
+              x.lower()
+              for x in profile["locations"].get("priority_2", [])
           ]
+
+          avoid = [
+              x.lower()
+              for x in profile.get("avoid_or_low_priority", [])
+          ]
+
+          # -----------------------------
+          # Helpers
+          # -----------------------------
+          def extract_experience_range(text):
+              """
+              Returns (minimum_years, maximum_years_or_None)
+              for common phrases such as:
+                3 years
+                3-5 years
+                4–5 years
+                5+ years
+                5 to 7 years
+              """
+              patterns = [
+                  r'(\d+(?:\.\d+)?)\s*(?:-|–|—|to)\s*(\d+(?:\.\d+)?)\s*(?:\+)?\s*(?:years?|yrs?)',
+                  r'(\d+(?:\.\d+)?)\s*\+\s*(?:years?|yrs?)',
+                  r'(\d+(?:\.\d+)?)\s*(?:years?|yrs?)'
+              ]
+
+              ranges = []
+
+              for pattern in patterns:
+                  for match in re.finditer(
+                      pattern,
+                      text,
+                      flags=re.IGNORECASE
+                  ):
+                      if match.lastindex == 2:
+                          low = float(match.group(1))
+                          high = float(match.group(2))
+                          ranges.append((low, high))
+                      else:
+                          low = float(match.group(1))
+
+                          # "5+" means at least 5.
+                          if "+" in match.group(0):
+                              ranges.append((low, None))
+                          else:
+                              # A standalone "3 years" is usually
+                              # a requirement, not an exact range.
+                              ranges.append((low, low))
+
+              if not ranges:
+                  return None
+
+              # Prefer explicit ranges / 5+ over incidental numbers.
+              for low, high in ranges:
+                  if high is not None or "+" in text[
+                      max(0, text.find(str(int(low))) - 5):
+                      text.find(str(int(low))) + 20
+                  ]:
+                      return low, high
+
+              return ranges[0]
+
+          def experience_score(text):
+              result = extract_experience_range(text)
+
+              if result is None:
+                  return 0, "Experience requirement not stated"
+
+              minimum, maximum = result
+
+              if maximum is None:
+                  if experience_years >= minimum:
+                      return 8, f"Experience: {minimum:g}+ years (meets)"
+                  elif minimum - experience_years <= 1:
+                      return 2, f"Experience: {minimum:g}+ years (slight stretch)"
+                  elif minimum - experience_years <= 2:
+                      return -8, f"Experience: {minimum:g}+ years (stretch)"
+                  else:
+                      return -18, f"Experience: {minimum:g}+ years (mismatch)"
+
+              if minimum <= experience_years <= maximum:
+                  return 10, (
+                      f"Experience: {minimum:g}–{maximum:g} years (strong fit)"
+                  )
+
+              if experience_years < minimum:
+                  gap = minimum - experience_years
+
+                  if gap <= 1:
+                      return 4, (
+                          f"Experience: {minimum:g}–{maximum:g} years "
+                          "(slight stretch)"
+                      )
+                  elif gap <= 2:
+                      return -6, (
+                          f"Experience: {minimum:g}–{maximum:g} years "
+                          "(stretch)"
+                      )
+                  else:
+                      return -18, (
+                          f"Experience: {minimum:g}–{maximum:g} years "
+                          "(mismatch)"
+                      )
+
+              # Candidate has more experience than requested.
+              # This is normally not a serious problem.
+              return 6, (
+                  f"Experience: {minimum:g}–{maximum:g} years "
+                  "(meets/exceeds)"
+              )
 
           def score_job(job):
               title = job.get("title", "")
-              description = job.get("description", "")
+              description = job.get("description", "") or ""
 
               text = f"{title} {description}".lower()
+              title_lower = title.lower()
 
               score = 0
               reasons = []
 
+              # -----------------------------
+              # 1. Core skills — maximum 40
+              # -----------------------------
               core_matches = [
                   skill for skill in core
                   if skill in text
               ]
 
-              score += min(len(core_matches) * 6, 48)
+              score += min(len(core_matches) * 5, 40)
 
               if core_matches:
                   reasons.append(
                       "Core skills: "
-                      + ", ".join(core_matches[:6])
+                      + ", ".join(core_matches[:7])
                   )
 
+              # -----------------------------
+              # 2. Secondary skills — maximum 8
+              # -----------------------------
               secondary_matches = [
                   skill for skill in secondary
                   if skill in text
               ]
 
-              score += min(
-                  len(secondary_matches) * 2,
-                  10
-              )
+              score += min(len(secondary_matches) * 1.5, 8)
 
               if secondary_matches:
                   reasons.append(
@@ -237,70 +357,92 @@ jobs:
                       + ", ".join(secondary_matches[:5])
                   )
 
-              role_terms = [
+              # -----------------------------
+              # 3. Target role — maximum 17
+              # -----------------------------
+              role_matches = [
+                  role for role in target_roles
+                  if role in title_lower
+              ]
+
+              # Also recognize strong backend signals in the title.
+              backend_terms = [
                   "backend",
+                  "back end",
                   "java developer",
                   "java engineer",
                   "spring boot",
-                  "microservices",
-                  "software engineer"
+                  "microservices"
               ]
 
-              role_matches = [
-                  term for term in role_terms
-                  if term in text
+              backend_matches = [
+                  term for term in backend_terms
+                  if term in title_lower
               ]
 
-              score += min(
-                  len(role_matches) * 5,
-                  25
-              )
+              if role_matches:
+                  score += 17
+                  reasons.append("Target role")
+              elif backend_matches:
+                  score += 12
+                  reasons.append("Strong backend role")
 
-              location = job.get(
-                  "location",
-                  ""
-              ).lower()
+              # -----------------------------
+              # 4. Experience — maximum 10
+              # -----------------------------
+              exp_points, exp_reason = experience_score(text)
+              score += exp_points
+              reasons.append(exp_reason)
 
-              if any(
-                  x in location
-                  for x in priority_1
-              ):
+              # -----------------------------
+              # 5. Location — maximum 15
+              # -----------------------------
+              location = job.get("location", "").lower()
+
+              if any(x in location for x in priority_1):
                   score += 15
-                  reasons.append(
-                      "Priority location"
-                  )
-
-              elif any(
-                  x in location
-                  for x in priority_2
-              ):
+                  reasons.append("Priority location")
+              elif any(x in location for x in priority_2):
                   score += 10
-                  reasons.append(
-                      "Preferred location"
-                  )
+                  reasons.append("Preferred location")
+              elif (
+                  "remote" in location
+                  and "remote india" in [
+                      x.lower()
+                      for x in profile["locations"].get(
+                          "priority_3", []
+                      )
+                  ]
+              ):
+                  score += 7
+                  reasons.append("Remote option")
 
-              low_priority = [
-                  "frontend",
-                  "ui developer",
-                  "web designer",
-                  "manual tester",
-                  "sales"
+              # -----------------------------
+              # 6. Avoid / low-priority roles
+              # -----------------------------
+              matched_avoid = [
+                  term for term in avoid
+                  if term in title_lower
               ]
 
-              if any(
-                  x in text
-                  for x in low_priority
-              ):
+              if matched_avoid:
                   score -= 25
                   reasons.append(
-                      "Possible role mismatch"
+                      "Possible role mismatch: "
+                      + ", ".join(matched_avoid[:3])
                   )
 
+              # Don't let "AI" alone inflate a normal Java role.
+              # It is already represented as a secondary skill.
+
               return (
-                  max(0, min(score, 100)),
+                  max(0, min(round(score), 100)),
                   reasons
               )
 
+          # -----------------------------
+          # Rank all jobs
+          # -----------------------------
           ranked = []
 
           for job in data.get("results", []):
@@ -322,6 +464,9 @@ jobs:
               reverse=True
           )
 
+          # -----------------------------
+          # Report
+          # -----------------------------
           report = [
               f"# Daily Job Report — {date.today()}",
               "",
