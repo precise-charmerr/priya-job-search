@@ -66,7 +66,38 @@ jobs:
             --limit 10 \
             --format json > jobs/hyderabad.json
 
-            - name: Fetch job details
+      - name: Combine results
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          jobs = []
+          seen = set()
+
+          for file in Path("jobs").glob("*.json"):
+              data = json.loads(file.read_text())
+
+              for job in data.get("results", []):
+                  job_id = job.get("id")
+
+                  if job_id and job_id not in seen:
+                      seen.add(job_id)
+                      jobs.append(job)
+
+          output = {
+              "count": len(jobs),
+              "results": jobs
+          }
+
+          Path("jobs/all.json").write_text(
+              json.dumps(output, indent=2)
+          )
+
+          print(f"Unique jobs collected: {len(jobs)}")
+          PY
+
+      - name: Fetch job details
         run: |
           python - <<'PY'
           import json
@@ -77,10 +108,15 @@ jobs:
           data = json.loads(Path("jobs/all.json").read_text())
           detailed = []
 
-          for i, job in enumerate(data.get("results", []), 1):
+          results = data.get("results", [])
+
+          for i, job in enumerate(results, 1):
               job_id = job["id"]
 
-              print(f"[{i}/{len(data['results'])}] Fetching {job_id} - {job['title']}")
+              print(
+                  f"[{i}/{len(results)}] "
+                  f"Fetching {job_id} - {job['title']}"
+              )
 
               try:
                   result = subprocess.run(
@@ -102,13 +138,9 @@ jobs:
                       detail = json.loads(result.stdout)
 
                       if isinstance(detail, dict):
-                          merged = {**job, **detail}
-                          detailed.append(merged)
-                      else:
-                          detailed.append(job)
-                  else:
-                      print(f"Failed to fetch {job_id}")
-                      detailed.append(job)
+                          job.update(detail)
+
+                  detailed.append(job)
 
               except Exception as e:
                   print(f"Error fetching {job_id}: {e}")
@@ -144,8 +176,15 @@ jobs:
               Path("jobs/detailed.json").read_text()
           )
 
-          core = [x.lower() for x in profile["core_skills"]]
-          secondary = [x.lower() for x in profile["secondary_skills"]]
+          core = [
+              skill.lower()
+              for skill in profile["core_skills"]
+          ]
+
+          secondary = [
+              skill.lower()
+              for skill in profile["secondary_skills"]
+          ]
 
           priority_1 = [
               "pune",
@@ -169,7 +208,6 @@ jobs:
               score = 0
               reasons = []
 
-              # Core technical skills
               core_matches = [
                   skill for skill in core
                   if skill in text
@@ -179,25 +217,26 @@ jobs:
 
               if core_matches:
                   reasons.append(
-                      "Core skills: " +
-                      ", ".join(core_matches[:6])
+                      "Core skills: "
+                      + ", ".join(core_matches[:6])
                   )
 
-              # Secondary skills
               secondary_matches = [
                   skill for skill in secondary
                   if skill in text
               ]
 
-              score += min(len(secondary_matches) * 2, 10)
+              score += min(
+                  len(secondary_matches) * 2,
+                  10
+              )
 
               if secondary_matches:
                   reasons.append(
-                      "Additional skills: " +
-                      ", ".join(secondary_matches[:5])
+                      "Additional skills: "
+                      + ", ".join(secondary_matches[:5])
                   )
 
-              # Role relevance
               role_terms = [
                   "backend",
                   "java developer",
@@ -212,20 +251,34 @@ jobs:
                   if term in text
               ]
 
-              score += min(len(role_matches) * 5, 25)
+              score += min(
+                  len(role_matches) * 5,
+                  25
+              )
 
-              # Location priority
-              location = job.get("location", "").lower()
+              location = job.get(
+                  "location",
+                  ""
+              ).lower()
 
-              if any(x in location for x in priority_1):
+              if any(
+                  x in location
+                  for x in priority_1
+              ):
                   score += 15
-                  reasons.append("Priority location")
+                  reasons.append(
+                      "Priority location"
+                  )
 
-              elif any(x in location for x in priority_2):
+              elif any(
+                  x in location
+                  for x in priority_2
+              ):
                   score += 10
-                  reasons.append("Preferred location")
+                  reasons.append(
+                      "Preferred location"
+                  )
 
-              # Penalize clearly unrelated roles
               low_priority = [
                   "frontend",
                   "ui developer",
@@ -234,11 +287,19 @@ jobs:
                   "sales"
               ]
 
-              if any(x in text for x in low_priority):
+              if any(
+                  x in text
+                  for x in low_priority
+              ):
                   score -= 25
-                  reasons.append("Possible role mismatch")
+                  reasons.append(
+                      "Possible role mismatch"
+                  )
 
-              return max(0, min(score, 100)), reasons
+              return (
+                  max(0, min(score, 100)),
+                  reasons
+              )
 
           ranked = []
 
@@ -270,16 +331,27 @@ jobs:
               ""
           ]
 
-          for i, job in enumerate(ranked[:20], 1):
+          for i, job in enumerate(
+              ranked[:20],
+              1
+          ):
               report.extend([
                   f"### {i}. {job['title']}",
-                  f"**{job['company']}** — {job['location']}",
-                  f"**Match score: {job['score']}/100**",
+                  (
+                      f"**{job['company']}** — "
+                      f"{job['location']}"
+                  ),
+                  (
+                      f"**Match score: "
+                      f"{job['score']}/100**"
+                  ),
                   "",
-                  "**Why:** " +
-                  ("; ".join(job["reasons"])
-                   if job["reasons"]
-                   else "Limited information available"),
+                  "**Why:** "
+                  + (
+                      "; ".join(job["reasons"])
+                      if job["reasons"]
+                      else "Limited information available"
+                  ),
                   "",
                   f"**Apply:** {job['url']}",
                   ""
