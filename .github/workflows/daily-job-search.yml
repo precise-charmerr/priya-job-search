@@ -21,52 +21,84 @@ jobs:
       - name: Create jobs directory
         run: mkdir -p jobs
 
-      - name: Search Pune
+      # Search 5 relevant Java/backend query variants across 6 target locations.
+      # 5 x 6 x 8 = 240 maximum raw results before deduplication.
+      # Deduplication below should normally leave roughly 100-200 unique jobs.
+      - name: Search jobs across locations and queries
         run: |
-          bun run .agents/skills/linkedin-search/cli/src/cli.ts search \
-            --query "Java Spring Boot" \
-            --location "Pune, Maharashtra, India" \
-            --jobage 7 \
-            --limit 10 \
-            --format json > jobs/pune.json
+          python - <<'PY'
+          import subprocess
+          from pathlib import Path
 
-      - name: Search Gurugram
-        run: |
-          bun run .agents/skills/linkedin-search/cli/src/cli.ts search \
-            --query "Java Spring Boot" \
-            --location "Gurugram, Haryana, India" \
-            --jobage 7 \
-            --limit 10 \
-            --format json > jobs/gurugram.json
+          queries = [
+              "Java Backend Developer",
+              "Java Developer Spring Boot",
+              "Java Microservices",
+              "Spring Boot Backend",
+              "Java Software Engineer",
+          ]
 
-      - name: Search Noida
-        run: |
-          bun run .agents/skills/linkedin-search/cli/src/cli.ts search \
-            --query "Java Spring Boot" \
-            --location "Noida, Uttar Pradesh, India" \
-            --jobage 7 \
-            --limit 10 \
-            --format json > jobs/noida.json
+          locations = [
+              ("pune", "Pune, Maharashtra, India"),
+              ("gurugram", "Gurugram, Haryana, India"),
+              ("noida", "Noida, Uttar Pradesh, India"),
+              ("bengaluru", "Bengaluru, Karnataka, India"),
+              ("hyderabad", "Hyderabad, Telangana, India"),
+              ("remote", "Remote India"),
+          ]
 
-      - name: Search Bengaluru
-        run: |
-          bun run .agents/skills/linkedin-search/cli/src/cli.ts search \
-            --query "Java Spring Boot" \
-            --location "Bengaluru, Karnataka, India" \
-            --jobage 7 \
-            --limit 10 \
-            --format json > jobs/bengaluru.json
+          total = 0
 
-      - name: Search Hyderabad
-        run: |
-          bun run .agents/skills/linkedin-search/cli/src/cli.ts search \
-            --query "Java Spring Boot" \
-            --location "Hyderabad, Telangana, India" \
-            --jobage 7 \
-            --limit 10 \
-            --format json > jobs/hyderabad.json
+          for location_key, location in locations:
+              for query_index, query in enumerate(queries, 1):
+                  output_file = Path(
+                      f"jobs/search-{location_key}-{query_index}.json"
+                  )
 
-      - name: Combine results
+                  print(
+                      f"Searching: {query} | {location}"
+                  )
+
+                  try:
+                      result = subprocess.run(
+                          [
+                              "bun",
+                              "run",
+                              ".agents/skills/linkedin-search/cli/src/cli.ts",
+                              "search",
+                              "--query",
+                              query,
+                              "--location",
+                              location,
+                              "--jobage",
+                              "7",
+                              "--limit",
+                              "8",
+                              "--format",
+                              "json",
+                          ],
+                          capture_output=True,
+                          text=True,
+                          timeout=60,
+                      )
+
+                      if result.returncode == 0:
+                          output_file.write_text(result.stdout)
+                          total += 1
+                      else:
+                          print(
+                              f"Search failed for {query} | {location}: "
+                              f"{result.stderr[:500]}"
+                          )
+                  except Exception as exc:
+                      print(
+                          f"Search error for {query} | {location}: {exc}"
+                      )
+
+          print(f"Successful searches: {total}/30")
+          PY
+
+      - name: Combine and deduplicate results
         run: |
           python - <<'PY'
           import json
@@ -75,19 +107,22 @@ jobs:
           jobs = []
           seen = set()
 
-          for file in Path("jobs").glob("*.json"):
-              data = json.loads(file.read_text())
+          for file in Path("jobs").glob("search-*.json"):
+              try:
+                  data = json.loads(file.read_text())
+              except Exception as exc:
+                  print(f"Skipping invalid {file}: {exc}")
+                  continue
 
               for job in data.get("results", []):
                   job_id = job.get("id")
-
                   if job_id and job_id not in seen:
                       seen.add(job_id)
                       jobs.append(job)
 
           output = {
               "count": len(jobs),
-              "results": jobs
+              "results": jobs,
           }
 
           Path("jobs/all.json").write_text(
@@ -107,7 +142,6 @@ jobs:
 
           data = json.loads(Path("jobs/all.json").read_text())
           detailed = []
-
           results = data.get("results", [])
 
           for i, job in enumerate(results, 1):
@@ -127,11 +161,11 @@ jobs:
                           "detail",
                           job_id,
                           "--format",
-                          "json"
+                          "json",
                       ],
                       capture_output=True,
                       text=True,
-                      timeout=30
+                      timeout=30,
                   )
 
                   if result.returncode == 0:
@@ -139,11 +173,16 @@ jobs:
 
                       if isinstance(detail, dict):
                           job.update(detail)
+                  else:
+                      print(
+                          f"Detail fetch failed for {job_id}: "
+                          f"{result.stderr[:300]}"
+                      )
 
                   detailed.append(job)
 
-              except Exception as e:
-                  print(f"Error fetching {job_id}: {e}")
+              except Exception as exc:
+                  print(f"Error fetching {job_id}: {exc}")
                   detailed.append(job)
 
               time.sleep(1)
@@ -152,9 +191,9 @@ jobs:
               json.dumps(
                   {
                       "count": len(detailed),
-                      "results": detailed
+                      "results": detailed,
                   },
-                  indent=2
+                  indent=2,
               )
           )
 
@@ -177,9 +216,6 @@ jobs:
               Path("jobs/detailed.json").read_text()
           )
 
-          # -----------------------------
-          # Profile
-          # -----------------------------
           target_roles = [
               x.lower() for x in profile.get("target_roles", [])
           ]
@@ -211,23 +247,11 @@ jobs:
               for x in profile.get("avoid_or_low_priority", [])
           ]
 
-          # -----------------------------
-          # Helpers
-          # -----------------------------
           def extract_experience_range(text):
-              """
-              Returns (minimum_years, maximum_years_or_None)
-              for common phrases such as:
-                3 years
-                3-5 years
-                4–5 years
-                5+ years
-                5 to 7 years
-              """
               patterns = [
                   r'(\d+(?:\.\d+)?)\s*(?:-|–|—|to)\s*(\d+(?:\.\d+)?)\s*(?:\+)?\s*(?:years?|yrs?)',
                   r'(\d+(?:\.\d+)?)\s*\+\s*(?:years?|yrs?)',
-                  r'(\d+(?:\.\d+)?)\s*(?:years?|yrs?)'
+                  r'(\d+(?:\.\d+)?)\s*(?:years?|yrs?)',
               ]
 
               ranges = []
@@ -236,7 +260,7 @@ jobs:
                   for match in re.finditer(
                       pattern,
                       text,
-                      flags=re.IGNORECASE
+                      flags=re.IGNORECASE,
                   ):
                       if match.lastindex == 2:
                           low = float(match.group(1))
@@ -245,18 +269,14 @@ jobs:
                       else:
                           low = float(match.group(1))
 
-                          # "5+" means at least 5.
                           if "+" in match.group(0):
                               ranges.append((low, None))
                           else:
-                              # A standalone "3 years" is usually
-                              # a requirement, not an exact range.
                               ranges.append((low, low))
 
               if not ranges:
                   return None
 
-              # Prefer explicit ranges / 5+ over incidental numbers.
               for low, high in ranges:
                   if high is not None or "+" in text[
                       max(0, text.find(str(int(low))) - 5):
@@ -286,7 +306,8 @@ jobs:
 
               if minimum <= experience_years <= maximum:
                   return 10, (
-                      f"Experience: {minimum:g}–{maximum:g} years (strong fit)"
+                      f"Experience: {minimum:g}–{maximum:g} years "
+                      "(strong fit)"
                   )
 
               if experience_years < minimum:
@@ -308,8 +329,6 @@ jobs:
                           "(mismatch)"
                       )
 
-              # Candidate has more experience than requested.
-              # This is normally not a serious problem.
               return 6, (
                   f"Experience: {minimum:g}–{maximum:g} years "
                   "(meets/exceeds)"
@@ -325,9 +344,6 @@ jobs:
               score = 0
               reasons = []
 
-              # -----------------------------
-              # 1. Core skills — maximum 40
-              # -----------------------------
               core_matches = [
                   skill for skill in core
                   if skill in text
@@ -341,9 +357,6 @@ jobs:
                       + ", ".join(core_matches[:7])
                   )
 
-              # -----------------------------
-              # 2. Secondary skills — maximum 8
-              # -----------------------------
               secondary_matches = [
                   skill for skill in secondary
                   if skill in text
@@ -357,22 +370,18 @@ jobs:
                       + ", ".join(secondary_matches[:5])
                   )
 
-              # -----------------------------
-              # 3. Target role — maximum 17
-              # -----------------------------
               role_matches = [
                   role for role in target_roles
                   if role in title_lower
               ]
 
-              # Also recognize strong backend signals in the title.
               backend_terms = [
                   "backend",
                   "back end",
                   "java developer",
                   "java engineer",
                   "spring boot",
-                  "microservices"
+                  "microservices",
               ]
 
               backend_matches = [
@@ -387,16 +396,10 @@ jobs:
                   score += 12
                   reasons.append("Strong backend role")
 
-              # -----------------------------
-              # 4. Experience — maximum 10
-              # -----------------------------
               exp_points, exp_reason = experience_score(text)
               score += exp_points
               reasons.append(exp_reason)
 
-              # -----------------------------
-              # 5. Location — maximum 15
-              # -----------------------------
               location = job.get("location", "").lower()
 
               if any(x in location for x in priority_1):
@@ -417,9 +420,6 @@ jobs:
                   score += 7
                   reasons.append("Remote option")
 
-              # -----------------------------
-              # 6. Avoid / low-priority roles
-              # -----------------------------
               matched_avoid = [
                   term for term in avoid
                   if term in title_lower
@@ -432,17 +432,11 @@ jobs:
                       + ", ".join(matched_avoid[:3])
                   )
 
-              # Don't let "AI" alone inflate a normal Java role.
-              # It is already represented as a secondary skill.
-
               return (
                   max(0, min(round(score), 100)),
-                  reasons
+                  reasons,
               )
 
-          # -----------------------------
-          # Rank all jobs
-          # -----------------------------
           ranked = []
 
           for job in data.get("results", []):
@@ -456,30 +450,24 @@ jobs:
                   "date": job.get("date", ""),
                   "url": job.get("url", ""),
                   "job_id": job.get("id", ""),
-                  "reasons": reasons
+                  "reasons": reasons,
               })
 
           ranked.sort(
               key=lambda x: x["score"],
-              reverse=True
+              reverse=True,
           )
 
-          # -----------------------------
-          # Report
-          # -----------------------------
           report = [
               f"# Daily Job Report — {date.today()}",
               "",
               f"**Jobs found:** {len(ranked)}",
               "",
               "## 🔥 Top Matches",
-              ""
+              "",
           ]
 
-          for i, job in enumerate(
-              ranked[:20],
-              1
-          ):
+          for i, job in enumerate(ranked[:30], 1):
               report.extend([
                   f"### {i}. {job['title']}",
                   (
@@ -499,7 +487,7 @@ jobs:
                   ),
                   "",
                   f"**Apply:** {job['url']}",
-                  ""
+                  "",
               ])
 
           Path("jobs/daily-report.md").write_text(
