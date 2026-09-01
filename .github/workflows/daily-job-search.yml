@@ -1,4 +1,4 @@
-name: Job Search Test
+name: Daily Job Search
 
 on:
   workflow_dispatch:
@@ -16,11 +16,52 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Search jobs
+      - name: Search Pune
         run: |
+          echo "===== PUNE ====="
           bun run .agents/skills/linkedin-search/cli/src/cli.ts search \
             --query "Java Spring Boot" \
-            --location "India" \
+            --location "Pune, Maharashtra, India" \
+            --jobage 7 \
+            --limit 5 \
+            --format table
+
+      - name: Search Gurugram
+        run: |
+          echo "===== GURUGRAM ====="
+          bun run .agents/skills/linkedin-search/cli/src/cli.ts search \
+            --query "Java Spring Boot" \
+            --location "Gurugram, Haryana, India" \
+            --jobage 7 \
+            --limit 5 \
+            --format table
+
+      - name: Search Bengaluru
+        run: |
+          echo "===== BENGALURU ====="
+          bun run .agents/skills/linkedin-search/cli/src/cli.ts search \
+            --query "Java Spring Boot" \
+            --location "Bengaluru, Karnataka, India" \
+            --jobage 7 \
+            --limit 5 \
+            --format table
+
+      - name: Search Hyderabad
+        run: |
+          echo "===== HYDERABAD ====="
+          bun run .agents/skills/linkedin-search/cli/src/cli.ts search \
+            --query "Java Spring Boot" \
+            --location "Hyderabad, Telangana, India" \
+            --jobage 7 \
+            --limit 5 \
+            --format table
+
+      - name: Search Remote India
+        run: |
+          echo "===== REMOTE ====="
+          bun run .agents/skills/linkedin-search/cli/src/cli.ts search \
+            --query "Java Spring Boot" \
+            --location "Remote" \
             --jobage 7 \
             --limit 5 \
             --format table
