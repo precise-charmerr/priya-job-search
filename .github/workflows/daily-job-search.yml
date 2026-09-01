@@ -66,38 +66,234 @@ jobs:
             --limit 10 \
             --format json > jobs/hyderabad.json
 
-      - name: Combine results
+            - name: Fetch job details
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+          import time
+
+          data = json.loads(Path("jobs/all.json").read_text())
+          detailed = []
+
+          for i, job in enumerate(data.get("results", []), 1):
+              job_id = job["id"]
+
+              print(f"[{i}/{len(data['results'])}] Fetching {job_id} - {job['title']}")
+
+              try:
+                  result = subprocess.run(
+                      [
+                          "bun",
+                          "run",
+                          ".agents/skills/linkedin-search/cli/src/cli.ts",
+                          "detail",
+                          job_id,
+                          "--format",
+                          "json"
+                      ],
+                      capture_output=True,
+                      text=True,
+                      timeout=30
+                  )
+
+                  if result.returncode == 0:
+                      detail = json.loads(result.stdout)
+
+                      if isinstance(detail, dict):
+                          merged = {**job, **detail}
+                          detailed.append(merged)
+                      else:
+                          detailed.append(job)
+                  else:
+                      print(f"Failed to fetch {job_id}")
+                      detailed.append(job)
+
+              except Exception as e:
+                  print(f"Error fetching {job_id}: {e}")
+                  detailed.append(job)
+
+              time.sleep(1)
+
+          Path("jobs/detailed.json").write_text(
+              json.dumps(
+                  {
+                      "count": len(detailed),
+                      "results": detailed
+                  },
+                  indent=2
+              )
+          )
+
+          print(f"Detailed jobs collected: {len(detailed)}")
+          PY
+
+      - name: Create ranked report
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
+          from datetime import date
 
-          jobs = []
-          seen = set()
-
-          for file in Path("jobs").glob("*.json"):
-              if file.name == "all.json":
-                  continue
-
-              data = json.loads(file.read_text())
-
-              for job in data.get("results", []):
-                  job_id = job.get("id")
-
-                  if job_id and job_id not in seen:
-                      seen.add(job_id)
-                      jobs.append(job)
-
-          output = {
-              "count": len(jobs),
-              "results": jobs
-          }
-
-          Path("jobs/all.json").write_text(
-              json.dumps(output, indent=2)
+          profile = json.loads(
+              Path("config/job-profile.json").read_text()
           )
 
-          print(f"Unique jobs collected: {len(jobs)}")
+          data = json.loads(
+              Path("jobs/detailed.json").read_text()
+          )
+
+          core = [x.lower() for x in profile["core_skills"]]
+          secondary = [x.lower() for x in profile["secondary_skills"]]
+
+          priority_1 = [
+              "pune",
+              "gurugram",
+              "gurgaon",
+              "noida"
+          ]
+
+          priority_2 = [
+              "bengaluru",
+              "bangalore",
+              "hyderabad"
+          ]
+
+          def score_job(job):
+              title = job.get("title", "")
+              description = job.get("description", "")
+
+              text = f"{title} {description}".lower()
+
+              score = 0
+              reasons = []
+
+              # Core technical skills
+              core_matches = [
+                  skill for skill in core
+                  if skill in text
+              ]
+
+              score += min(len(core_matches) * 6, 48)
+
+              if core_matches:
+                  reasons.append(
+                      "Core skills: " +
+                      ", ".join(core_matches[:6])
+                  )
+
+              # Secondary skills
+              secondary_matches = [
+                  skill for skill in secondary
+                  if skill in text
+              ]
+
+              score += min(len(secondary_matches) * 2, 10)
+
+              if secondary_matches:
+                  reasons.append(
+                      "Additional skills: " +
+                      ", ".join(secondary_matches[:5])
+                  )
+
+              # Role relevance
+              role_terms = [
+                  "backend",
+                  "java developer",
+                  "java engineer",
+                  "spring boot",
+                  "microservices",
+                  "software engineer"
+              ]
+
+              role_matches = [
+                  term for term in role_terms
+                  if term in text
+              ]
+
+              score += min(len(role_matches) * 5, 25)
+
+              # Location priority
+              location = job.get("location", "").lower()
+
+              if any(x in location for x in priority_1):
+                  score += 15
+                  reasons.append("Priority location")
+
+              elif any(x in location for x in priority_2):
+                  score += 10
+                  reasons.append("Preferred location")
+
+              # Penalize clearly unrelated roles
+              low_priority = [
+                  "frontend",
+                  "ui developer",
+                  "web designer",
+                  "manual tester",
+                  "sales"
+              ]
+
+              if any(x in text for x in low_priority):
+                  score -= 25
+                  reasons.append("Possible role mismatch")
+
+              return max(0, min(score, 100)), reasons
+
+          ranked = []
+
+          for job in data.get("results", []):
+              score, reasons = score_job(job)
+
+              ranked.append({
+                  "score": score,
+                  "title": job.get("title", ""),
+                  "company": job.get("company", ""),
+                  "location": job.get("location", ""),
+                  "date": job.get("date", ""),
+                  "url": job.get("url", ""),
+                  "job_id": job.get("id", ""),
+                  "reasons": reasons
+              })
+
+          ranked.sort(
+              key=lambda x: x["score"],
+              reverse=True
+          )
+
+          report = [
+              f"# Daily Job Report — {date.today()}",
+              "",
+              f"**Jobs found:** {len(ranked)}",
+              "",
+              "## 🔥 Top Matches",
+              ""
+          ]
+
+          for i, job in enumerate(ranked[:20], 1):
+              report.extend([
+                  f"### {i}. {job['title']}",
+                  f"**{job['company']}** — {job['location']}",
+                  f"**Match score: {job['score']}/100**",
+                  "",
+                  "**Why:** " +
+                  ("; ".join(job["reasons"])
+                   if job["reasons"]
+                   else "Limited information available"),
+                  "",
+                  f"**Apply:** {job['url']}",
+                  ""
+              ])
+
+          Path("jobs/daily-report.md").write_text(
+              "\n".join(report)
+          )
+
+          Path("jobs/ranked.json").write_text(
+              json.dumps(ranked, indent=2)
+          )
+
+          print("\n".join(report))
           PY
 
       - name: Upload job results
