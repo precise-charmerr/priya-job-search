@@ -1,0 +1,68 @@
+{
+  "target_roles": [
+    "Java Backend Engineer",
+    "Java Developer",
+    "Spring Boot Developer",
+    "Backend Software Engineer",
+    "Java Microservices Engineer",
+    "Software Engineer",
+    "Backend Engineer"
+  ],
+  "locations": {
+    "priority_1": [
+      "Pune",
+      "Gurugram",
+      "Gurgaon",
+      "Noida"
+    ],
+    "priority_2": [
+      "Bengaluru",
+      "Bangalore",
+      "Hyderabad"
+    ],
+    "priority_3": [
+      "Other India",
+      "Remote India"
+    ]
+  },
+  "experience_years": 3,
+  "core_skills": [
+    "Java",
+    "Spring Boot",
+    "Spring MVC",
+    "Spring Security",
+    "Microservices",
+    "REST APIs",
+    "RESTful APIs",
+    "Redis",
+    "SQL",
+    "Python",
+    "FastAPI",
+    "Flask",
+    "Distributed Systems",
+    "Multithreading",
+    "CI/CD",
+    "Maven"
+  ],
+  "secondary_skills": [
+    "PySpark",
+    "Elasticsearch",
+    "AWS",
+    "RAG",
+    "LangGraph",
+    "Vector Search",
+    "FAISS",
+    "Chroma",
+    "LLM",
+    "AI"
+  ],
+  "avoid_or_low_priority": [
+    "Frontend Developer",
+    "UI Developer",
+    "Web Designer",
+    "Manual Tester",
+    "QA Tester",
+    "Sales",
+    "DevOps Engineer"
+  ]
+}
