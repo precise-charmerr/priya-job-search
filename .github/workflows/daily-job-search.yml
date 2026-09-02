@@ -221,9 +221,9 @@ jobs:
               Path("jobs/detailed.json").read_text()
           )
 
-          # ============================================================
-          # PROFILE
-          # ============================================================
+          # ---------------------------------------------------------
+          # Profile configuration
+          # ---------------------------------------------------------
 
           primary_roles = [
               x.lower()
@@ -288,6 +288,34 @@ jobs:
               )
           )
 
+          minimum_years = float(
+              profile["experience"].get(
+                  "minimum_years",
+                  current_years
+              )
+          )
+
+          ideal_minimum_years = float(
+              profile["experience"].get(
+                  "ideal_minimum_years",
+                  current_years
+              )
+          )
+
+          ideal_maximum_years = float(
+              profile["experience"].get(
+                  "ideal_maximum_years",
+                  current_years
+              )
+          )
+
+          maximum_years = float(
+              profile["experience"].get(
+                  "maximum_years",
+                  current_years
+              )
+          )
+
           locations = {
               key.lower(): value
               for key, value in profile.get(
@@ -296,33 +324,18 @@ jobs:
               ).items()
           }
 
-          # ============================================================
-          # EXPERIENCE EXTRACTION
-          # ============================================================
+          # ---------------------------------------------------------
+          # Experience extraction
+          # ---------------------------------------------------------
 
           def extract_experience_range(text):
-              """
-              Extract realistic job experience requirements.
-
-              Examples:
-                  3-5 years
-                  3 to 5 years
-                  3+ years
-                  3 years of experience
-
-              Ignore unrealistic values such as 100+ years.
-              """
-
               patterns = [
-                  # 3-5 years
                   r'(\d+(?:\.\d+)?)\s*(?:-|–|—|to)\s*'
                   r'(\d+(?:\.\d+)?)\s*(?:years?|yrs?)',
 
-                  # 3+ years
                   r'(\d+(?:\.\d+)?)\s*\+\s*'
                   r'(?:years?|yrs?)',
 
-                  # 3 years of experience
                   r'(\d+(?:\.\d+)?)\s*'
                   r'(?:years?|yrs?)\s+'
                   r'(?:of\s+)?'
@@ -349,43 +362,67 @@ jobs:
                           else:
                               high = low
 
-                      # Reject obviously unrealistic requirements.
+                      # Ignore obviously unrelated numbers.
                       if low > 15:
                           continue
 
                       if high is not None and high > 15:
                           continue
 
-                      candidates.append(
-                          (low, high)
-                      )
+                      candidates.append((low, high))
 
               if not candidates:
                   return None
 
               return candidates[0]
 
+          # ---------------------------------------------------------
+          # Experience scoring
+          # ---------------------------------------------------------
+
           def experience_score(text):
               result = extract_experience_range(text)
 
               if result is None:
-                  return (
-                      5,
-                      "Experience: not stated"
-                  )
+                  return 5, "Experience: not stated"
 
               minimum, maximum = result
 
-              # 3+ years
+              # ---------------------------------------------------
+              # Example: "3+ years"
+              # ---------------------------------------------------
+
               if maximum is None:
 
-                  if current_years >= minimum:
+                  # Exact ideal starting point.
+                  if minimum == ideal_minimum_years:
                       return (
                           10,
+                          f"Experience: {minimum:g}+ years "
+                          "(ideal fit)"
+                      )
+
+                  # Requirement is within the candidate's
+                  # acceptable range and candidate already meets it.
+                  if (
+                      minimum >= minimum_years
+                      and minimum <= current_years
+                  ):
+                      return (
+                          9,
                           f"Experience: {minimum:g}+ years "
                           "(strong fit)"
                       )
 
+                  # Requirement is below our minimum target.
+                  if minimum < minimum_years:
+                      return (
+                          3,
+                          f"Experience: {minimum:g}+ years "
+                          "(below target)"
+                      )
+
+                  # Candidate is slightly below requirement.
                   gap = minimum - current_years
 
                   if gap <= 1:
@@ -397,7 +434,7 @@ jobs:
 
                   if gap <= 2:
                       return (
-                          2,
+                          3,
                           f"Experience: {minimum:g}+ years "
                           "(stretch)"
                       )
@@ -408,33 +445,48 @@ jobs:
                       "(mismatch)"
                   )
 
-              # Candidate is inside requested range.
-              if minimum <= current_years <= maximum:
+              # ---------------------------------------------------
+              # Example: "3–5 years"
+              # ---------------------------------------------------
 
-                  # Ideal range: 3-5 for this profile.
-                  if (
-                      minimum <= profile["experience"].get(
-                          "ideal_minimum_years",
-                          current_years
-                      )
-                      and maximum >= profile["experience"].get(
-                          "ideal_maximum_years",
-                          current_years
-                      )
-                  ):
-                      return (
-                          10,
-                          f"Experience: {minimum:g}–{maximum:g} years "
-                          "(ideal fit)"
-                      )
+              # Entire job range sits inside our ideal range.
+              if (
+                  minimum >= ideal_minimum_years
+                  and maximum <= ideal_maximum_years
+              ):
+                  return (
+                      10,
+                      f"Experience: {minimum:g}–{maximum:g} years "
+                      "(ideal fit)"
+                  )
 
+              # Job overlaps our ideal range and does not exceed
+              # our maximum acceptable experience.
+              if (
+                  maximum >= ideal_minimum_years
+                  and minimum <= ideal_maximum_years
+                  and maximum <= maximum_years
+              ):
                   return (
                       9,
                       f"Experience: {minimum:g}–{maximum:g} years "
                       "(strong fit)"
                   )
 
-              # Candidate has slightly less experience.
+              # Job starts below our ideal range but overlaps
+              # our minimum acceptable experience.
+              if (
+                  minimum < ideal_minimum_years
+                  and maximum >= minimum_years
+                  and maximum <= maximum_years
+              ):
+                  return (
+                      8,
+                      f"Experience: {minimum:g}–{maximum:g} years "
+                      "(acceptable fit)"
+                  )
+
+              # Candidate has less experience than required.
               if current_years < minimum:
                   gap = minimum - current_years
 
@@ -447,7 +499,7 @@ jobs:
 
                   if gap <= 2:
                       return (
-                          2,
+                          3,
                           f"Experience: {minimum:g}–{maximum:g} years "
                           "(stretch)"
                       )
@@ -458,16 +510,31 @@ jobs:
                       "(mismatch)"
                   )
 
-              # Candidate has more experience than requested.
+              # Candidate has more experience than the job range.
+              if current_years > maximum:
+
+                  if current_years - maximum <= 1:
+                      return (
+                          8,
+                          f"Experience: {minimum:g}–{maximum:g} years "
+                          "(meets/exceeds)"
+                      )
+
+                  return (
+                      6,
+                      f"Experience: {minimum:g}–{maximum:g} years "
+                      "(above range)"
+                  )
+
               return (
-                  8,
+                  5,
                   f"Experience: {minimum:g}–{maximum:g} years "
-                  "(meets/exceeds)"
+                  "(uncertain fit)"
               )
 
-          # ============================================================
-          # LOCATION SCORE
-          # ============================================================
+          # ---------------------------------------------------------
+          # Location scoring
+          # ---------------------------------------------------------
 
           def location_score(location):
               location_lower = location.lower()
@@ -476,15 +543,11 @@ jobs:
               best_location = None
 
               for configured_location, value in locations.items():
-
                   if configured_location in location_lower:
-
                       if value > best_score:
                           best_score = value
                           best_location = configured_location
 
-              # Convert profile location preference (0-100)
-              # into a maximum of 3 ranking points.
               points = round(
                   (best_score / 100) * 3
               )
@@ -500,17 +563,17 @@ jobs:
                   "Location: not prioritized"
               )
 
-          # ============================================================
-          # JOB SCORING
-          # ============================================================
+          # ---------------------------------------------------------
+          # Overall job scoring
+          # ---------------------------------------------------------
 
           def score_job(job):
-
               title = job.get("title", "")
               description = job.get(
                   "description",
                   ""
               ) or ""
+
               location = job.get(
                   "location",
                   ""
@@ -525,9 +588,9 @@ jobs:
               score = 0
               reasons = []
 
-              # --------------------------------------------------------
-              # MUST HAVE SKILLS
-              # --------------------------------------------------------
+              # ---------------------------------------------------
+              # Must-have skills
+              # ---------------------------------------------------
 
               must_matches = [
                   skill
@@ -552,9 +615,9 @@ jobs:
                       + ", ".join(must_matches)
                   )
 
-              # --------------------------------------------------------
-              # ROLE MATCHING
-              # --------------------------------------------------------
+              # ---------------------------------------------------
+              # Role
+              # ---------------------------------------------------
 
               primary_matches = [
                   role
@@ -599,9 +662,9 @@ jobs:
                           "Relevant backend role"
                       )
 
-              # --------------------------------------------------------
-              # HIGH-VALUE SKILLS
-              # --------------------------------------------------------
+              # ---------------------------------------------------
+              # High-value skills
+              # ---------------------------------------------------
 
               high_matches = [
                   skill
@@ -624,9 +687,9 @@ jobs:
                       )
                   )
 
-              # --------------------------------------------------------
-              # SUPPORTING SKILLS
-              # --------------------------------------------------------
+              # ---------------------------------------------------
+              # Supporting skills
+              # ---------------------------------------------------
 
               supporting_matches = [
                   skill
@@ -649,9 +712,9 @@ jobs:
                       )
                   )
 
-              # --------------------------------------------------------
-              # BONUS SKILLS
-              # --------------------------------------------------------
+              # ---------------------------------------------------
+              # Bonus skills
+              # ---------------------------------------------------
 
               bonus_matches = [
                   skill
@@ -674,31 +737,37 @@ jobs:
                       )
                   )
 
-              # --------------------------------------------------------
-              # EXPERIENCE
-              # --------------------------------------------------------
+              # ---------------------------------------------------
+              # Experience
+              # ---------------------------------------------------
 
               exp_points, exp_reason = experience_score(
                   text
               )
 
               score += exp_points
-              reasons.append(exp_reason)
 
-              # --------------------------------------------------------
-              # LOCATION
-              # --------------------------------------------------------
+              reasons.append(
+                  exp_reason
+              )
+
+              # ---------------------------------------------------
+              # Location
+              # ---------------------------------------------------
 
               location_points, location_reason = location_score(
                   location
               )
 
               score += location_points
-              reasons.append(location_reason)
 
-              # --------------------------------------------------------
-              # AVOID ROLES
-              # --------------------------------------------------------
+              reasons.append(
+                  location_reason
+              )
+
+              # ---------------------------------------------------
+              # Avoid list
+              # ---------------------------------------------------
 
               matched_avoid = [
                   term
@@ -716,9 +785,9 @@ jobs:
                       )
                   )
 
-              # --------------------------------------------------------
-              # FINAL SCORE
-              # --------------------------------------------------------
+              # ---------------------------------------------------
+              # Final score
+              # ---------------------------------------------------
 
               final_score = max(
                   0,
@@ -733,9 +802,9 @@ jobs:
                   reasons
               )
 
-          # ============================================================
-          # RANK ALL JOBS
-          # ============================================================
+          # ---------------------------------------------------------
+          # Rank jobs
+          # ---------------------------------------------------------
 
           ranked = []
 
@@ -743,8 +812,9 @@ jobs:
               "results",
               []
           ):
-
-              score, reasons = score_job(job)
+              score, reasons = score_job(
+                  job
+              )
 
               ranked.append({
                   "score": score,
@@ -780,9 +850,9 @@ jobs:
               reverse=True,
           )
 
-          # ============================================================
-          # REPORT
-          # ============================================================
+          # ---------------------------------------------------------
+          # Create report
+          # ---------------------------------------------------------
 
           report = [
               f"# Daily Job Report — {date.today()}",
@@ -797,7 +867,6 @@ jobs:
               ranked[:50],
               1
           ):
-
               report.extend([
                   f"### {i}. {job['title']}",
                   (
