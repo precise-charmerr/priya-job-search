@@ -378,12 +378,13 @@ jobs:
           # ---------------------------------------------------------
           # Experience scoring
           #
-          # Important:
-          # We evaluate BOTH the minimum and maximum required
-          # experience.
+          # IMPORTANT:
+          # For a bounded range such as 4–12, we first evaluate
+          # whether the upper bound is too far beyond the user's
+          # acceptable maximum.
           #
-          # A job asking for 4–12 years is therefore not treated
-          # like a normal 4–5 year job.
+          # This prevents 4–12 from being classified as a slight
+          # stretch merely because its minimum is 4.
           # ---------------------------------------------------------
 
           def experience_score(text):
@@ -446,51 +447,65 @@ jobs:
                   )
 
               # ---------------------------------------------------
-              # Strong fit:
+              # FIRST: Check upper-bound mismatch.
               #
-              # Minimum is within our acceptable experience and
-              # maximum does not exceed our ideal maximum.
+              # This must happen BEFORE checking the minimum.
               #
-              # Examples:
-              # 2–4
-              # 3–5
-              # 4–5
+              # Example:
+              # 4–12
+              #
+              # minimum = 4 (only slightly above current)
+              # maximum = 12 (far beyond acceptable 6)
+              #
+              # Therefore this is a mismatch.
               # ---------------------------------------------------
 
-              if (
-                  minimum >= minimum_years
-                  and maximum <= ideal_maximum_years
-              ):
-                  if (
-                      minimum >= ideal_minimum_years
-                      and maximum <= ideal_maximum_years
-                  ):
-                      return (
-                          10,
-                          0,
-                          f"Experience: {minimum:g}–{maximum:g} years "
-                          "(ideal fit)"
-                      )
+              excess = maximum - maximum_years
 
+              if excess >= 4:
                   return (
-                      9,
                       0,
+                      20,
                       f"Experience: {minimum:g}–{maximum:g} years "
-                      "(strong fit)"
+                      "(mismatch)"
+                  )
+
+              if excess >= 2:
+                  return (
+                      4,
+                      12,
+                      f"Experience: {minimum:g}–{maximum:g} years "
+                      "(significant stretch)"
+                  )
+
+              if excess > 0:
+                  return (
+                      6,
+                      5,
+                      f"Experience: {minimum:g}–{maximum:g} years "
+                      "(slight stretch)"
                   )
 
               # ---------------------------------------------------
-              # Acceptable upper-end extension.
-              #
-              # Example:
-              # 4–6
-              #
-              # Still within the user's maximum acceptable
-              # experience.
+              # Now the range is within the user's maximum
+              # acceptable experience.
               # ---------------------------------------------------
 
+              # Entire range is inside ideal range.
               if (
-                  minimum <= ideal_maximum_years
+                  minimum >= ideal_minimum_years
+                  and maximum <= ideal_maximum_years
+              ):
+                  return (
+                      10,
+                      0,
+                      f"Experience: {minimum:g}–{maximum:g} years "
+                      "(ideal fit)"
+                  )
+
+              # Range starts below ideal but remains acceptable.
+              if (
+                  minimum >= minimum_years
                   and maximum <= maximum_years
               ):
                   return (
@@ -500,18 +515,8 @@ jobs:
                       "(acceptable fit)"
                   )
 
-              # ---------------------------------------------------
-              # Significant stretch:
-              #
-              # The minimum is above the user's current experience,
-              # OR the range extends beyond the ideal maximum.
-              #
-              # Example:
-              # 5–6
-              # 4–7
-              # ---------------------------------------------------
-
-              if minimum > current_years:
+              # Candidate has less experience than the job requires.
+              if current_years < minimum:
 
                   gap = minimum - current_years
 
@@ -538,39 +543,29 @@ jobs:
                       "(mismatch)"
                   )
 
-              # ---------------------------------------------------
-              # Major mismatch because the upper bound is far
-              # beyond our maximum acceptable experience.
-              #
-              # Examples:
-              # 4–12
-              # 5–8
-              # 6–10
-              # ---------------------------------------------------
+              # Candidate has more experience than the job range.
+              if current_years > maximum:
 
-              excess = maximum - maximum_years
+                  if current_years - maximum <= 1:
+                      return (
+                          8,
+                          0,
+                          f"Experience: {minimum:g}–{maximum:g} years "
+                          "(meets/exceeds)"
+                      )
 
-              if excess >= 4:
                   return (
+                      6,
                       0,
-                      20,
                       f"Experience: {minimum:g}–{maximum:g} years "
-                      "(mismatch)"
-                  )
-
-              if excess >= 2:
-                  return (
-                      4,
-                      12,
-                      f"Experience: {minimum:g}–{maximum:g} years "
-                      "(significant stretch)"
+                      "(above range)"
                   )
 
               return (
-                  6,
                   5,
+                  0,
                   f"Experience: {minimum:g}–{maximum:g} years "
-                  "(slight stretch)"
+                  "(uncertain fit)"
               )
 
           # ---------------------------------------------------------
