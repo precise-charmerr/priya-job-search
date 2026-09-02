@@ -68,7 +68,7 @@ jobs:
                               "--location",
                               location,
                               "--jobage",
-                              "7",
+                              "1",
                               "--limit",
                               "8",
                               "--format",
