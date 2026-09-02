@@ -225,10 +225,6 @@ jobs:
               Path("jobs/detailed.json").read_text()
           )
 
-          # ---------------------------------------------------------
-          # PROFILE
-          # ---------------------------------------------------------
-
           target_roles = profile.get(
               "target_roles",
               {}
@@ -311,19 +307,12 @@ jobs:
               profile.get("daily_target", 50)
           )
 
-          # ---------------------------------------------------------
-          # HELPERS
-          # ---------------------------------------------------------
-
           def normalize(value):
               return re.sub(
                   r"\s+",
                   " ",
                   str(value or "").lower()
               ).strip()
-
-          def contains(text, term):
-              return normalize(term) in normalize(text)
 
           def job_text(job):
               return " ".join(
@@ -334,10 +323,6 @@ jobs:
                       str(job.get("experience", "")),
                   ]
               )
-
-          # ---------------------------------------------------------
-          # EXPERIENCE EXTRACTION
-          # ---------------------------------------------------------
 
           def extract_experience_range(text):
               patterns = [
@@ -368,6 +353,7 @@ jobs:
                       if match.lastindex == 2:
                           low = float(match.group(1))
                           high = float(match.group(2))
+
                           ranges.append(
                               (low, high, False)
                           )
@@ -388,10 +374,6 @@ jobs:
 
               return ranges[0]
 
-          # ---------------------------------------------------------
-          # EXPERIENCE SCORING
-          # ---------------------------------------------------------
-
           def experience_score(text):
               result = extract_experience_range(text)
 
@@ -404,17 +386,12 @@ jobs:
 
               minimum, maximum, open_ended = result
 
-              # -----------------------------------------------------
-              # OPEN ENDED: "X+ years"
-              # -----------------------------------------------------
+              # =====================================================
+              # OPEN-ENDED: "X+ years"
+              # =====================================================
 
               if open_ended:
 
-                  # Example:
-                  # Candidate = 3 years
-                  # Requirement = 6+ years
-                  #
-                  # Clearly outside maximum acceptable experience.
                   if minimum > maximum_years:
                       return (
                           0,
@@ -423,7 +400,6 @@ jobs:
                           "(mismatch)"
                       )
 
-                  # Requirement is above candidate's current level.
                   if minimum > current_years:
                       gap = minimum - current_years
 
@@ -442,7 +418,6 @@ jobs:
                           "(slight stretch)"
                       )
 
-                  # 3+ for a 3-year candidate = ideal.
                   if minimum >= ideal_minimum_years:
                       return (
                           10,
@@ -451,9 +426,6 @@ jobs:
                           "(ideal fit)"
                       )
 
-                  # IMPORTANT:
-                  # 1+ / 2+ should NOT be treated as ideal
-                  # for a 3-year candidate.
                   return (
                       5,
                       0,
@@ -461,15 +433,11 @@ jobs:
                       "(below target)"
                   )
 
-              # -----------------------------------------------------
+              # =====================================================
               # BOUNDED RANGE: "X-Y years"
-              # -----------------------------------------------------
+              # =====================================================
 
-              # Check upper-bound mismatch FIRST.
-              #
-              # This prevents:
-              # 4-12 -> being classified as slight stretch
-              # simply because 4 > current_years.
+              # First check if the upper bound is too high.
               excess = maximum - maximum_years
 
               if excess >= 4:
@@ -496,6 +464,28 @@ jobs:
                       "(slight stretch)"
                   )
 
+              # -----------------------------------------------------
+              # NEW FIX:
+              #
+              # If the entire range ends below the candidate's
+              # ideal minimum, the job is below target.
+              #
+              # Example:
+              # Candidate = 3 years
+              # Job = 1-2 years
+              #
+              # 2 < ideal_minimum_years (3)
+              # therefore -> below target.
+              # -----------------------------------------------------
+
+              if maximum < ideal_minimum_years:
+                  return (
+                      5,
+                      0,
+                      f"Experience: {minimum:g}–{maximum:g} years "
+                      "(below target)"
+                  )
+
               # Ideal range.
               if (
                   minimum >= ideal_minimum_years
@@ -520,7 +510,7 @@ jobs:
                       "(acceptable fit)"
                   )
 
-              # Candidate is below required minimum.
+              # Requirement starts above candidate's experience.
               if minimum > current_years:
                   gap = minimum - current_years
 
@@ -539,25 +529,12 @@ jobs:
                       "(slight stretch)"
                   )
 
-              # Job is below the candidate's target.
-              if maximum < minimum_years:
-                  return (
-                      5,
-                      0,
-                      f"Experience: {minimum:g}–{maximum:g} years "
-                      "(below target)"
-                  )
-
               return (
                   7,
                   0,
                   f"Experience: {minimum:g}–{maximum:g} years "
                   "(strong fit)"
               )
-
-          # ---------------------------------------------------------
-          # ROLE SCORING
-          # ---------------------------------------------------------
 
           def role_score(title):
               title = normalize(title)
@@ -600,10 +577,6 @@ jobs:
                   0,
                   ""
               )
-
-          # ---------------------------------------------------------
-          # SKILL SCORING
-          # ---------------------------------------------------------
 
           def skill_score(text):
               text = normalize(text)
@@ -650,10 +623,6 @@ jobs:
                   bonus_matches,
               )
 
-          # ---------------------------------------------------------
-          # LOCATION SCORING
-          # ---------------------------------------------------------
-
           def location_score(location):
               location = normalize(location)
 
@@ -680,10 +649,6 @@ jobs:
                   f"Location: {best_location.title()}"
               )
 
-          # ---------------------------------------------------------
-          # AVOID SCORING
-          # ---------------------------------------------------------
-
           def avoid_score(title):
               title = normalize(title)
 
@@ -704,10 +669,6 @@ jobs:
                   "Avoid: " + ", ".join(matches[:3])
               )
 
-          # ---------------------------------------------------------
-          # COMPLETE JOB SCORE
-          # ---------------------------------------------------------
-
           def score_job(job):
 
               title = job.get("title", "")
@@ -715,7 +676,6 @@ jobs:
 
               text = job_text(job)
 
-              # Must-have check.
               must_matches = [
                   skill
                   for skill in must_have
@@ -728,7 +688,6 @@ jobs:
               score = 0
               reasons = []
 
-              # Must-have.
               score += len(must_matches) * 20
 
               reasons.append(
@@ -736,7 +695,6 @@ jobs:
                   + ", ".join(must_matches)
               )
 
-              # Role.
               role_points, role_reason = role_score(
                   title
               )
@@ -746,7 +704,6 @@ jobs:
               if role_reason:
                   reasons.append(role_reason)
 
-              # Skills.
               (
                   skill_points,
                   high_matches,
@@ -774,7 +731,6 @@ jobs:
                       + ", ".join(bonus_matches)
                   )
 
-              # Experience.
               (
                   experience_points,
                   experience_penalty,
@@ -788,7 +744,6 @@ jobs:
                   experience_reason
               )
 
-              # Location.
               (
                   location_points,
                   location_reason,
@@ -800,7 +755,6 @@ jobs:
                   location_reason
               )
 
-              # Avoid.
               (
                   avoid_points,
                   avoid_reason,
@@ -813,7 +767,6 @@ jobs:
                       avoid_reason
                   )
 
-              # Clamp.
               score = max(
                   0,
                   min(
@@ -845,10 +798,6 @@ jobs:
                   "reasons": reasons,
               }
 
-          # ---------------------------------------------------------
-          # RANK
-          # ---------------------------------------------------------
-
           ranked = []
 
           for job in data.get(
@@ -864,10 +813,6 @@ jobs:
               key=lambda x: x["score"],
               reverse=True,
           )
-
-          # ---------------------------------------------------------
-          # REPORT
-          # ---------------------------------------------------------
 
           top_jobs = ranked[
               :daily_target
@@ -899,13 +844,8 @@ jobs:
                       ),
                       "",
                       "**Why:** "
-                      + (
-                          "; ".join(
-                              job["reasons"]
-                          )
-                          if job["reasons"]
-                          else
-                          "Limited information available"
+                      + "; ".join(
+                          job["reasons"]
                       ),
                       "",
                       f"**Apply:** {job['url']}",
