@@ -384,50 +384,50 @@ jobs:
               result = extract_experience_range(text)
 
               if result is None:
-                  return 5, "Experience: not stated"
+                  return 5, 0, "Experience: not stated"
 
               minimum, maximum = result
 
               # ---------------------------------------------------
-              # Example: "3+ years"
+              # "3+ years"
               # ---------------------------------------------------
 
               if maximum is None:
 
-                  # Exact ideal starting point.
                   if minimum == ideal_minimum_years:
                       return (
                           10,
+                          0,
                           f"Experience: {minimum:g}+ years "
                           "(ideal fit)"
                       )
 
-                  # Requirement is within the candidate's
-                  # acceptable range and candidate already meets it.
                   if (
                       minimum >= minimum_years
+                      and minimum < ideal_minimum_years
                       and minimum <= current_years
                   ):
                       return (
                           9,
+                          0,
                           f"Experience: {minimum:g}+ years "
                           "(strong fit)"
                       )
 
-                  # Requirement is below our minimum target.
                   if minimum < minimum_years:
                       return (
                           3,
+                          8,
                           f"Experience: {minimum:g}+ years "
                           "(below target)"
                       )
 
-                  # Candidate is slightly below requirement.
                   gap = minimum - current_years
 
                   if gap <= 1:
                       return (
                           6,
+                          5,
                           f"Experience: {minimum:g}+ years "
                           "(slight stretch)"
                       )
@@ -435,32 +435,35 @@ jobs:
                   if gap <= 2:
                       return (
                           3,
+                          10,
                           f"Experience: {minimum:g}+ years "
                           "(stretch)"
                       )
 
                   return (
                       0,
+                      20,
                       f"Experience: {minimum:g}+ years "
                       "(mismatch)"
                   )
 
               # ---------------------------------------------------
-              # Example: "3–5 years"
+              # "3–5 years"
               # ---------------------------------------------------
 
-              # Entire job range sits inside our ideal range.
+              # Entire range is inside our ideal range.
               if (
                   minimum >= ideal_minimum_years
                   and maximum <= ideal_maximum_years
               ):
                   return (
                       10,
+                      0,
                       f"Experience: {minimum:g}–{maximum:g} years "
                       "(ideal fit)"
                   )
 
-              # Job overlaps our ideal range and does not exceed
+              # Range overlaps ideal range and remains within
               # our maximum acceptable experience.
               if (
                   maximum >= ideal_minimum_years
@@ -469,12 +472,12 @@ jobs:
               ):
                   return (
                       9,
+                      0,
                       f"Experience: {minimum:g}–{maximum:g} years "
                       "(strong fit)"
                   )
 
-              # Job starts below our ideal range but overlaps
-              # our minimum acceptable experience.
+              # Range is below ideal but still acceptable.
               if (
                   minimum < ideal_minimum_years
                   and maximum >= minimum_years
@@ -482,17 +485,20 @@ jobs:
               ):
                   return (
                       8,
+                      0,
                       f"Experience: {minimum:g}–{maximum:g} years "
                       "(acceptable fit)"
                   )
 
-              # Candidate has less experience than required.
+              # Candidate has less experience than the minimum
+              # required by the job.
               if current_years < minimum:
                   gap = minimum - current_years
 
                   if gap <= 1:
                       return (
                           6,
+                          5,
                           f"Experience: {minimum:g}–{maximum:g} years "
                           "(slight stretch)"
                       )
@@ -500,12 +506,14 @@ jobs:
                   if gap <= 2:
                       return (
                           3,
+                          10,
                           f"Experience: {minimum:g}–{maximum:g} years "
                           "(stretch)"
                       )
 
                   return (
                       0,
+                      20,
                       f"Experience: {minimum:g}–{maximum:g} years "
                       "(mismatch)"
                   )
@@ -516,18 +524,21 @@ jobs:
                   if current_years - maximum <= 1:
                       return (
                           8,
+                          0,
                           f"Experience: {minimum:g}–{maximum:g} years "
                           "(meets/exceeds)"
                       )
 
                   return (
                       6,
+                      0,
                       f"Experience: {minimum:g}–{maximum:g} years "
                       "(above range)"
                   )
 
               return (
                   5,
+                  0,
                   f"Experience: {minimum:g}–{maximum:g} years "
                   "(uncertain fit)"
               )
@@ -741,11 +752,12 @@ jobs:
               # Experience
               # ---------------------------------------------------
 
-              exp_points, exp_reason = experience_score(
+              exp_points, exp_penalty, exp_reason = experience_score(
                   text
               )
 
               score += exp_points
+              score -= exp_penalty
 
               reasons.append(
                   exp_reason
