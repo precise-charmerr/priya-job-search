@@ -243,39 +243,66 @@ jobs:
           priority_1 = [
               x.lower()
               for x in profile["locations"].get(
-                  "priority_1", []
+                  "priority_1",
+                  []
               )
           ]
 
           priority_2 = [
               x.lower()
               for x in profile["locations"].get(
-                  "priority_2", []
+                  "priority_2",
+                  []
               )
           ]
 
           priority_3 = [
               x.lower()
               for x in profile["locations"].get(
-                  "priority_3", []
+                  "priority_3",
+                  []
               )
           ]
 
           avoid = [
               x.lower()
               for x in profile.get(
-                  "avoid_or_low_priority", []
+                  "avoid_or_low_priority",
+                  []
               )
           ]
 
           def extract_experience_range(text):
+              """
+              Extract a realistic experience requirement.
+
+              Examples:
+              3-5 years
+              3 to 5 years
+              3+ years
+              3 years of experience
+
+              Unrealistic values such as 100+ years are ignored.
+              """
+
               patterns = [
-                  r'(\d+(?:\.\d+)?)\s*(?:-|–|—|to)\s*(\d+(?:\.\d+)?)\s*(?:\+)?\s*(?:years?|yrs?)',
-                  r'(\d+(?:\.\d+)?)\s*\+\s*(?:years?|yrs?)',
+                  # 3-5 years / 3 to 5 years
+                  r'(\d+(?:\.\d+)?)\s*(?:-|–|—|to)\s*'
                   r'(\d+(?:\.\d+)?)\s*(?:years?|yrs?)',
+
+                  # 3+ years
+                  r'(\d+(?:\.\d+)?)\s*\+\s*'
+                  r'(?:years?|yrs?)',
+
+                  # 3 years of experience
+                  r'(\d+(?:\.\d+)?)\s*'
+                  r'(?:years?|yrs?)\s+'
+                  r'(?:of\s+)?'
+                  r'(?:relevant\s+)?'
+                  r'(?:work\s+)?experience',
               ]
 
-              ranges = []
+              candidates = []
 
               for pattern in patterns:
                   for match in re.finditer(
@@ -283,48 +310,66 @@ jobs:
                       text,
                       flags=re.IGNORECASE,
                   ):
-                      if match.lastindex == 2:
+                      if match.lastindex >= 2:
                           low = float(match.group(1))
                           high = float(match.group(2))
-                          ranges.append((low, high))
                       else:
                           low = float(match.group(1))
 
                           if "+" in match.group(0):
-                              ranges.append((low, None))
+                              high = None
                           else:
-                              ranges.append((low, low))
+                              high = low
 
-              if not ranges:
+                      # Ignore obviously invalid values.
+                      if low > 15:
+                          continue
+
+                      if high is not None and high > 15:
+                          continue
+
+                      candidates.append(
+                          (low, high)
+                      )
+
+              if not candidates:
                   return None
 
-              return ranges[0]
+              return candidates[0]
 
           def experience_score(text):
               result = extract_experience_range(text)
 
               if result is None:
-                  return 0, "Experience requirement not stated"
+                  return (
+                      0,
+                      "Experience requirement not stated"
+                  )
 
               minimum, maximum = result
 
+              # Example: 3+ years
               if maximum is None:
+
                   if experience_years >= minimum:
                       return (
-                          8,
-                          f"Experience: {minimum:g}+ years (meets)"
+                          10,
+                          f"Experience: {minimum:g}+ years "
+                          "(meets)"
                       )
 
-                  if minimum - experience_years <= 1:
+                  gap = minimum - experience_years
+
+                  if gap <= 1:
                       return (
-                          2,
+                          4,
                           f"Experience: {minimum:g}+ years "
                           "(slight stretch)"
                       )
 
-                  if minimum - experience_years <= 2:
+                  if gap <= 2:
                       return (
-                          -8,
+                          -6,
                           f"Experience: {minimum:g}+ years "
                           "(stretch)"
                       )
@@ -335,6 +380,7 @@ jobs:
                       "(mismatch)"
                   )
 
+              # Candidate is inside requested range.
               if minimum <= experience_years <= maximum:
                   return (
                       10,
@@ -342,6 +388,7 @@ jobs:
                       "(strong fit)"
                   )
 
+              # Candidate has less experience than required.
               if experience_years < minimum:
                   gap = minimum - experience_years
 
@@ -365,8 +412,9 @@ jobs:
                       "(mismatch)"
                   )
 
+              # Candidate has more experience than requested.
               return (
-                  6,
+                  8,
                   f"Experience: {minimum:g}–{maximum:g} years "
                   "(meets/exceeds)"
               )
@@ -414,7 +462,9 @@ jobs:
               if secondary_matches:
                   reasons.append(
                       "Additional skills: "
-                      + ", ".join(secondary_matches[:5])
+                      + ", ".join(
+                          secondary_matches[:5]
+                      )
                   )
 
               role_matches = [
@@ -444,9 +494,13 @@ jobs:
 
               elif backend_matches:
                   score += 12
-                  reasons.append("Strong backend role")
+                  reasons.append(
+                      "Strong backend role"
+                  )
 
-              exp_points, exp_reason = experience_score(text)
+              exp_points, exp_reason = experience_score(
+                  text
+              )
 
               score += exp_points
               reasons.append(exp_reason)
@@ -456,14 +510,18 @@ jobs:
                   for x in priority_1
               ):
                   score += 15
-                  reasons.append("Priority location")
+                  reasons.append(
+                      "Priority location"
+                  )
 
               elif any(
                   x in location_lower
                   for x in priority_2
               ):
                   score += 10
-                  reasons.append("Preferred location")
+                  reasons.append(
+                      "Preferred location"
+                  )
 
               elif (
                   "remote" in location_lower
@@ -473,7 +531,9 @@ jobs:
                   )
               ):
                   score += 7
-                  reasons.append("Remote option")
+                  reasons.append(
+                      "Remote option"
+                  )
 
               matched_avoid = [
                   term
@@ -485,7 +545,9 @@ jobs:
                   score -= 25
                   reasons.append(
                       "Possible role mismatch: "
-                      + ", ".join(matched_avoid[:3])
+                      + ", ".join(
+                          matched_avoid[:3]
+                      )
                   )
 
               return (
@@ -506,12 +568,30 @@ jobs:
 
               ranked.append({
                   "score": score,
-                  "title": job.get("title", ""),
-                  "company": job.get("company", ""),
-                  "location": job.get("location", ""),
-                  "date": job.get("date", ""),
-                  "url": job.get("url", ""),
-                  "job_id": job.get("id", ""),
+                  "title": job.get(
+                      "title",
+                      ""
+                  ),
+                  "company": job.get(
+                      "company",
+                      ""
+                  ),
+                  "location": job.get(
+                      "location",
+                      ""
+                  ),
+                  "date": job.get(
+                      "date",
+                      ""
+                  ),
+                  "url": job.get(
+                      "url",
+                      ""
+                  ),
+                  "job_id": job.get(
+                      "id",
+                      ""
+                  ),
                   "reasons": reasons,
               })
 
@@ -530,7 +610,7 @@ jobs:
           ]
 
           for i, job in enumerate(
-              ranked[:30],
+              ranked[:50],
               1
           ):
               report.extend([
@@ -546,9 +626,12 @@ jobs:
                   "",
                   "**Why:** "
                   + (
-                      "; ".join(job["reasons"])
+                      "; ".join(
+                          job["reasons"]
+                      )
                       if job["reasons"]
-                      else "Limited information available"
+                      else
+                      "Limited information available"
                   ),
                   "",
                   f"**Apply:** {job['url']}",
