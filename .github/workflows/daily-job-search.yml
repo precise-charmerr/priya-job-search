@@ -6,597 +6,936 @@ on:
     - cron: "30 3 * * *"
 
 jobs:
-  search:
+  search-jobs:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Bun
+      - name: Install Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - name: Search jobs
-        shell: bash
+      - name: Create jobs directory
+        run: mkdir -p jobs
+
+      - name: Search jobs across locations and queries
         run: |
-          set -e
+          python - <<'PY'
+          import subprocess
+          from pathlib import Path
 
-          mkdir -p jobs/raw
+          cli = ".agents/skills/linkedin-search/cli/src/cli.ts"
 
-          queries=(
-            "Java Backend Developer"
-            "Java Developer Spring Boot"
-            "Java Microservices"
-            "Spring Boot Backend"
-            "Java Software Engineer"
+          queries = [
+              "Java Backend Developer",
+              "Java Developer Spring Boot",
+              "Java Microservices",
+              "Spring Boot Backend",
+              "Java Software Engineer",
+          ]
+
+          locations = [
+              ("pune", "Pune, Maharashtra, India"),
+              ("gurugram", "Gurugram, Haryana, India"),
+              ("noida", "Noida, Uttar Pradesh, India"),
+              ("bengaluru", "Bengaluru, Karnataka, India"),
+              ("hyderabad", "Hyderabad, Telangana, India"),
+              ("remote", "Remote India"),
+          ]
+
+          total = 0
+
+          for location_key, location in locations:
+              for query_index, query in enumerate(queries, 1):
+                  output_file = Path(
+                      f"jobs/search-{location_key}-{query_index}.json"
+                  )
+
+                  print(f"Searching: {query} | {location}")
+
+                  try:
+                      result = subprocess.run(
+                          [
+                              "bun",
+                              "run",
+                              cli,
+                              "search",
+                              "--query",
+                              query,
+                              "--location",
+                              location,
+                              "--jobage",
+                              "7",
+                              "--limit",
+                              "8",
+                              "--format",
+                              "json",
+                          ],
+                          capture_output=True,
+                          text=True,
+                          timeout=60,
+                      )
+
+                      if result.returncode == 0:
+                          output_file.write_text(result.stdout)
+                          total += 1
+                      else:
+                          print(
+                              f"Search failed for {query} | {location}: "
+                              f"{result.stderr[:500]}"
+                          )
+
+                  except Exception as exc:
+                      print(
+                          f"Search error for {query} | {location}: {exc}"
+                      )
+
+          print(f"Successful searches: {total}/30")
+          PY
+
+      - name: Combine and deduplicate results
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          jobs = []
+          seen = set()
+
+          for file in Path("jobs").glob("search-*.json"):
+              try:
+                  data = json.loads(file.read_text())
+              except Exception as exc:
+                  print(f"Skipping invalid {file}: {exc}")
+                  continue
+
+              for job in data.get("results", []):
+                  job_id = job.get("id")
+
+                  if job_id and job_id not in seen:
+                      seen.add(job_id)
+                      jobs.append(job)
+
+          output = {
+              "count": len(jobs),
+              "results": jobs,
+          }
+
+          Path("jobs/all.json").write_text(
+              json.dumps(output, indent=2)
           )
 
-          locations=(
-            "Pune"
-            "Gurugram"
-            "Noida"
-            "Bengaluru"
-            "Hyderabad"
-            "Remote India"
-          )
-
-          for query in "${queries[@]}"; do
-            for location in "${locations[@]}"; do
-              echo "Searching: $query | $location"
-
-              bun run src/cli.ts search \
-                --query "$query" \
-                --location "$location" \
-                --jobage 7 \
-                --limit 8 \
-                --json > "jobs/raw/$(echo "$query-$location" | tr ' /' '__').json" || true
-
-              sleep 1
-            done
-          done
-
-      - name: Combine and deduplicate jobs
-        shell: bash
-        run: |
-          set -e
-
-          bun run src/cli.ts combine \
-            --input jobs/raw \
-            --output jobs/combined.json
+          print(f"Unique jobs collected: {len(jobs)}")
+          PY
 
       - name: Fetch job details
-        shell: bash
         run: |
-          set -e
+          python - <<'PY'
+          import json
+          import subprocess
+          import time
+          from pathlib import Path
 
-          mkdir -p jobs/details
+          cli = ".agents/skills/linkedin-search/cli/src/cli.ts"
 
-          node - <<'NODE'
-          const fs = require("fs");
-          const { execFileSync } = require("child_process");
+          data = json.loads(
+              Path("jobs/all.json").read_text()
+          )
 
-          const jobs = JSON.parse(
-            fs.readFileSync("jobs/combined.json", "utf8")
-          );
+          detailed = []
+          results = data.get("results", [])
 
-          for (const job of jobs) {
-            const id = String(job.id);
+          for i, job in enumerate(results, 1):
+              job_id = job["id"]
 
-            console.log(`Fetching details for ${id}`);
+              print(
+                  f"[{i}/{len(results)}] "
+                  f"Fetching {job_id} - {job.get('title', '')}"
+              )
 
-            try {
-              const result = execFileSync(
-                "bun",
-                [
-                  "run",
-                  "src/cli.ts",
-                  "detail",
-                  "--id",
-                  id,
-                  "--json"
-                ],
-                {
-                  encoding: "utf8",
-                  timeout: 30000
-                }
-              );
+              try:
+                  result = subprocess.run(
+                      [
+                          "bun",
+                          "run",
+                          cli,
+                          "detail",
+                          job_id,
+                          "--format",
+                          "json",
+                      ],
+                      capture_output=True,
+                      text=True,
+                      timeout=30,
+                  )
 
-              fs.writeFileSync(
-                `jobs/details/${id}.json`,
-                result
-              );
-            } catch (error) {
-              console.log(`Failed to fetch ${id}`);
-            }
+                  if result.returncode == 0:
+                      detail = json.loads(result.stdout)
 
-            execFileSync("sleep", ["1"]);
-          }
-          NODE
+                      if isinstance(detail, dict):
+                          job.update(detail)
 
-      - name: Rank jobs
-        shell: bash
+                  else:
+                      print(
+                          f"Detail fetch failed for {job_id}: "
+                          f"{result.stderr[:300]}"
+                      )
+
+                  detailed.append(job)
+
+              except Exception as exc:
+                  print(
+                      f"Error fetching {job_id}: {exc}"
+                  )
+                  detailed.append(job)
+
+              time.sleep(1)
+
+          Path("jobs/detailed.json").write_text(
+              json.dumps(
+                  {
+                      "count": len(detailed),
+                      "results": detailed,
+                  },
+                  indent=2,
+              )
+          )
+
+          print(
+              f"Detailed jobs collected: {len(detailed)}"
+          )
+          PY
+
+      - name: Create ranked report
         run: |
-          set -e
+          python - <<'PY'
+          import json
+          import re
+          from datetime import date
+          from pathlib import Path
 
-          node <<'NODE'
-          const fs = require("fs");
+          profile = json.loads(
+              Path("config/job-profile.json").read_text()
+          )
 
-          const profile = JSON.parse(
-            fs.readFileSync("config/job-profile.json", "utf8")
-          );
+          data = json.loads(
+              Path("jobs/detailed.json").read_text()
+          )
 
-          const jobsDir = "jobs/details";
+          # ---------------------------------------------------------
+          # PROFILE
+          # ---------------------------------------------------------
 
-          const jobs = fs
-            .readdirSync(jobsDir)
-            .filter(file => file.endsWith(".json"))
-            .map(file => {
-              try {
-                return JSON.parse(
-                  fs.readFileSync(`${jobsDir}/${file}`, "utf8")
-                );
-              } catch {
-                return null;
-              }
-            })
-            .filter(Boolean);
+          target_roles = profile.get(
+              "target_roles",
+              {}
+          )
 
-          const normalize = value =>
-            String(value || "")
-              .toLowerCase()
-              .replace(/[^\w+#.]+/g, " ")
-              .replace(/\s+/g, " ")
-              .trim();
+          primary_roles = [
+              x.lower()
+              for x in target_roles.get("primary", [])
+          ]
 
-          const textOf = job =>
-            normalize([
-              job.title,
-              job.description,
-              job.location,
-              job.company
-            ].join(" "));
+          secondary_roles = [
+              x.lower()
+              for x in target_roles.get("secondary", [])
+          ]
 
-          const titleOf = job =>
-            normalize(job.title);
+          experience = profile.get(
+              "experience",
+              {}
+          )
 
-          function containsTerm(text, term) {
-            const normalizedTerm = normalize(term);
+          current_years = float(
+              experience.get("current_years", 0)
+          )
 
-            if (!normalizedTerm) return false;
+          minimum_years = float(
+              experience.get("minimum_years", 0)
+          )
 
-            return text.includes(normalizedTerm);
+          ideal_minimum_years = float(
+              experience.get("ideal_minimum_years", 0)
+          )
+
+          ideal_maximum_years = float(
+              experience.get("ideal_maximum_years", 0)
+          )
+
+          maximum_years = float(
+              experience.get("maximum_years", 0)
+          )
+
+          skills = profile.get(
+              "skills",
+              {}
+          )
+
+          must_have = [
+              x.lower()
+              for x in skills.get("must_have", [])
+          ]
+
+          high_value = [
+              x.lower()
+              for x in skills.get("high_value", [])
+          ]
+
+          supporting = [
+              x.lower()
+              for x in skills.get("supporting", [])
+          ]
+
+          bonus = [
+              x.lower()
+              for x in skills.get("bonus", [])
+          ]
+
+          locations = {
+              k.lower(): float(v)
+              for k, v in profile.get(
+                  "locations",
+                  {}
+              ).items()
           }
 
-          function extractExperienceRange(job) {
-            const text = [
-              job.title || "",
-              job.description || "",
-              job.requirements || "",
-              job.experience || ""
-            ].join(" ");
+          avoid = [
+              x.lower()
+              for x in profile.get("avoid", [])
+          ]
 
-            const patterns = [
-              /(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)\s*(?:years?|yrs?)/i,
-              /(\d+(?:\.\d+)?)\s*(?:to)\s*(\d+(?:\.\d+)?)\s*(?:years?|yrs?)/i,
-              /(\d+(?:\.\d+)?)\s*\+\s*(?:years?|yrs?)/i
-            ];
+          daily_target = int(
+              profile.get("daily_target", 50)
+          )
 
-            for (const pattern of patterns) {
-              const match = text.match(pattern);
+          # ---------------------------------------------------------
+          # HELPERS
+          # ---------------------------------------------------------
 
-              if (!match) continue;
+          def normalize(value):
+              return re.sub(
+                  r"\s+",
+                  " ",
+                  str(value or "").lower()
+              ).strip()
 
-              const minimum = Number(match[1]);
+          def contains(text, term):
+              return normalize(term) in normalize(text)
 
-              if (match[2] !== undefined) {
-                return {
-                  minimum,
-                  maximum: Number(match[2]),
-                  openEnded: false
-                };
+          def job_text(job):
+              return " ".join(
+                  [
+                      str(job.get("title", "")),
+                      str(job.get("description", "")),
+                      str(job.get("requirements", "")),
+                      str(job.get("experience", "")),
+                  ]
+              )
+
+          # ---------------------------------------------------------
+          # EXPERIENCE EXTRACTION
+          # ---------------------------------------------------------
+
+          def extract_experience_range(text):
+              patterns = [
+                  (
+                      r"(\d+(?:\.\d+)?)\s*"
+                      r"(?:-|–|—|to)\s*"
+                      r"(\d+(?:\.\d+)?)\s*"
+                      r"(?:\+)?\s*(?:years?|yrs?)"
+                  ),
+                  (
+                      r"(\d+(?:\.\d+)?)\s*\+\s*"
+                      r"(?:years?|yrs?)"
+                  ),
+                  (
+                      r"(\d+(?:\.\d+)?)\s*"
+                      r"(?:years?|yrs?)"
+                  ),
+              ]
+
+              ranges = []
+
+              for pattern in patterns:
+                  for match in re.finditer(
+                      pattern,
+                      text,
+                      flags=re.IGNORECASE,
+                  ):
+                      if match.lastindex == 2:
+                          low = float(match.group(1))
+                          high = float(match.group(2))
+                          ranges.append(
+                              (low, high, False)
+                          )
+                      else:
+                          low = float(match.group(1))
+
+                          if "+" in match.group(0):
+                              ranges.append(
+                                  (low, None, True)
+                              )
+                          else:
+                              ranges.append(
+                                  (low, low, False)
+                              )
+
+              if not ranges:
+                  return None
+
+              return ranges[0]
+
+          # ---------------------------------------------------------
+          # EXPERIENCE SCORING
+          # ---------------------------------------------------------
+
+          def experience_score(text):
+              result = extract_experience_range(text)
+
+              if result is None:
+                  return (
+                      0,
+                      0,
+                      "Experience: not stated"
+                  )
+
+              minimum, maximum, open_ended = result
+
+              # -----------------------------------------------------
+              # OPEN ENDED: "X+ years"
+              # -----------------------------------------------------
+
+              if open_ended:
+
+                  # Example:
+                  # Candidate = 3 years
+                  # Requirement = 6+ years
+                  #
+                  # Clearly outside maximum acceptable experience.
+                  if minimum > maximum_years:
+                      return (
+                          0,
+                          -20,
+                          f"Experience: {minimum:g}+ years "
+                          "(mismatch)"
+                      )
+
+                  # Requirement is above candidate's current level.
+                  if minimum > current_years:
+                      gap = minimum - current_years
+
+                      if gap >= 2:
+                          return (
+                              4,
+                              -10,
+                              f"Experience: {minimum:g}+ years "
+                              "(significant stretch)"
+                          )
+
+                      return (
+                          6,
+                          -5,
+                          f"Experience: {minimum:g}+ years "
+                          "(slight stretch)"
+                      )
+
+                  # 3+ for a 3-year candidate = ideal.
+                  if minimum >= ideal_minimum_years:
+                      return (
+                          10,
+                          0,
+                          f"Experience: {minimum:g}+ years "
+                          "(ideal fit)"
+                      )
+
+                  # IMPORTANT:
+                  # 1+ / 2+ should NOT be treated as ideal
+                  # for a 3-year candidate.
+                  return (
+                      5,
+                      0,
+                      f"Experience: {minimum:g}+ years "
+                      "(below target)"
+                  )
+
+              # -----------------------------------------------------
+              # BOUNDED RANGE: "X-Y years"
+              # -----------------------------------------------------
+
+              # Check upper-bound mismatch FIRST.
+              #
+              # This prevents:
+              # 4-12 -> being classified as slight stretch
+              # simply because 4 > current_years.
+              excess = maximum - maximum_years
+
+              if excess >= 4:
+                  return (
+                      0,
+                      -20,
+                      f"Experience: {minimum:g}–{maximum:g} years "
+                      "(mismatch)"
+                  )
+
+              if excess >= 2:
+                  return (
+                      4,
+                      -10,
+                      f"Experience: {minimum:g}–{maximum:g} years "
+                      "(significant stretch)"
+                  )
+
+              if excess > 0:
+                  return (
+                      6,
+                      -5,
+                      f"Experience: {minimum:g}–{maximum:g} years "
+                      "(slight stretch)"
+                  )
+
+              # Ideal range.
+              if (
+                  minimum >= ideal_minimum_years
+                  and maximum <= ideal_maximum_years
+              ):
+                  return (
+                      10,
+                      0,
+                      f"Experience: {minimum:g}–{maximum:g} years "
+                      "(ideal fit)"
+                  )
+
+              # Acceptable range.
+              if (
+                  minimum >= minimum_years
+                  and maximum <= maximum_years
+              ):
+                  return (
+                      8,
+                      0,
+                      f"Experience: {minimum:g}–{maximum:g} years "
+                      "(acceptable fit)"
+                  )
+
+              # Candidate is below required minimum.
+              if minimum > current_years:
+                  gap = minimum - current_years
+
+                  if gap >= 2:
+                      return (
+                          4,
+                          -10,
+                          f"Experience: {minimum:g}–{maximum:g} years "
+                          "(significant stretch)"
+                      )
+
+                  return (
+                      6,
+                      -5,
+                      f"Experience: {minimum:g}–{maximum:g} years "
+                      "(slight stretch)"
+                  )
+
+              # Job is below the candidate's target.
+              if maximum < minimum_years:
+                  return (
+                      5,
+                      0,
+                      f"Experience: {minimum:g}–{maximum:g} years "
+                      "(below target)"
+                  )
+
+              return (
+                  7,
+                  0,
+                  f"Experience: {minimum:g}–{maximum:g} years "
+                  "(strong fit)"
+              )
+
+          # ---------------------------------------------------------
+          # ROLE SCORING
+          # ---------------------------------------------------------
+
+          def role_score(title):
+              title = normalize(title)
+
+              for role in primary_roles:
+                  if role in title:
+                      return (
+                          20,
+                          "Primary role"
+                      )
+
+              for role in secondary_roles:
+                  if role in title:
+                      return (
+                          12,
+                          "Secondary role"
+                      )
+
+              backend_terms = [
+                  "backend",
+                  "back end",
+                  "java developer",
+                  "java engineer",
+                  "software engineer",
+                  "software development engineer",
+                  "application developer",
+                  "platform engineer",
+              ]
+
+              if any(
+                  term in title
+                  for term in backend_terms
+              ):
+                  return (
+                      8,
+                      "Relevant backend role"
+                  )
+
+              return (
+                  0,
+                  ""
+              )
+
+          # ---------------------------------------------------------
+          # SKILL SCORING
+          # ---------------------------------------------------------
+
+          def skill_score(text):
+              text = normalize(text)
+
+              high_matches = [
+                  skill
+                  for skill in high_value
+                  if skill in text
+              ]
+
+              supporting_matches = [
+                  skill
+                  for skill in supporting
+                  if skill in text
+              ]
+
+              bonus_matches = [
+                  skill
+                  for skill in bonus
+                  if skill in text
+              ]
+
+              score = (
+                  min(
+                      len(high_matches) * 4,
+                      20
+                  )
+                  +
+                  min(
+                      len(supporting_matches) * 1.5,
+                      10
+                  )
+                  +
+                  min(
+                      len(bonus_matches),
+                      5
+                  )
+              )
+
+              return (
+                  score,
+                  high_matches,
+                  supporting_matches,
+                  bonus_matches,
+              )
+
+          # ---------------------------------------------------------
+          # LOCATION SCORING
+          # ---------------------------------------------------------
+
+          def location_score(location):
+              location = normalize(location)
+
+              best_location = None
+              best_weight = 0
+
+              for name, weight in locations.items():
+                  if name in location:
+                      if weight > best_weight:
+                          best_location = name
+                          best_weight = weight
+
+              if best_location is None:
+                  return (
+                      0,
+                      "Location: not prioritized"
+                  )
+
+              return (
+                  min(
+                      best_weight / 33.33,
+                      3
+                  ),
+                  f"Location: {best_location.title()}"
+              )
+
+          # ---------------------------------------------------------
+          # AVOID SCORING
+          # ---------------------------------------------------------
+
+          def avoid_score(title):
+              title = normalize(title)
+
+              matches = [
+                  term
+                  for term in avoid
+                  if term in title
+              ]
+
+              if not matches:
+                  return (
+                      0,
+                      ""
+                  )
+
+              return (
+                  -30,
+                  "Avoid: " + ", ".join(matches[:3])
+              )
+
+          # ---------------------------------------------------------
+          # COMPLETE JOB SCORE
+          # ---------------------------------------------------------
+
+          def score_job(job):
+
+              title = job.get("title", "")
+              location = job.get("location", "")
+
+              text = job_text(job)
+
+              # Must-have check.
+              must_matches = [
+                  skill
+                  for skill in must_have
+                  if skill in normalize(text)
+              ]
+
+              if not must_matches:
+                  return None
+
+              score = 0
+              reasons = []
+
+              # Must-have.
+              score += len(must_matches) * 20
+
+              reasons.append(
+                  "Must-have: "
+                  + ", ".join(must_matches)
+              )
+
+              # Role.
+              role_points, role_reason = role_score(
+                  title
+              )
+
+              score += role_points
+
+              if role_reason:
+                  reasons.append(role_reason)
+
+              # Skills.
+              (
+                  skill_points,
+                  high_matches,
+                  supporting_matches,
+                  bonus_matches,
+              ) = skill_score(text)
+
+              score += skill_points
+
+              if high_matches:
+                  reasons.append(
+                      "High-value skills: "
+                      + ", ".join(high_matches)
+                  )
+
+              if supporting_matches:
+                  reasons.append(
+                      "Supporting skills: "
+                      + ", ".join(supporting_matches)
+                  )
+
+              if bonus_matches:
+                  reasons.append(
+                      "Bonus skills: "
+                      + ", ".join(bonus_matches)
+                  )
+
+              # Experience.
+              (
+                  experience_points,
+                  experience_penalty,
+                  experience_reason,
+              ) = experience_score(text)
+
+              score += experience_points
+              score += experience_penalty
+
+              reasons.append(
+                  experience_reason
+              )
+
+              # Location.
+              (
+                  location_points,
+                  location_reason,
+              ) = location_score(location)
+
+              score += location_points
+
+              reasons.append(
+                  location_reason
+              )
+
+              # Avoid.
+              (
+                  avoid_points,
+                  avoid_reason,
+              ) = avoid_score(title)
+
+              score += avoid_points
+
+              if avoid_reason:
+                  reasons.append(
+                      avoid_reason
+                  )
+
+              # Clamp.
+              score = max(
+                  0,
+                  min(
+                      round(score),
+                      100
+                  )
+              )
+
+              return {
+                  "score": score,
+                  "title": title,
+                  "company": job.get(
+                      "company",
+                      ""
+                  ),
+                  "location": location,
+                  "date": job.get(
+                      "date",
+                      ""
+                  ),
+                  "url": job.get(
+                      "url",
+                      ""
+                  ),
+                  "job_id": job.get(
+                      "id",
+                      ""
+                  ),
+                  "reasons": reasons,
               }
 
-              return {
-                minimum,
-                maximum: Infinity,
-                openEnded: true
-              };
-            }
+          # ---------------------------------------------------------
+          # RANK
+          # ---------------------------------------------------------
 
-            return null;
-          }
+          ranked = []
 
-          function experienceScore(job) {
-            const range = extractExperienceRange(job);
+          for job in data.get(
+              "results",
+              []
+          ):
+              scored = score_job(job)
 
-            if (!range) {
-              return {
-                score: 0,
-                penalty: 0,
-                label: "Experience: not stated"
-              };
-            }
+              if scored:
+                  ranked.append(scored)
 
-            const {
-              current_years,
-              minimum_years,
-              ideal_minimum_years,
-              ideal_maximum_years,
-              maximum_years
-            } = profile.experience;
+          ranked.sort(
+              key=lambda x: x["score"],
+              reverse=True,
+          )
 
-            const minimum = range.minimum;
-            const maximum = range.maximum;
+          # ---------------------------------------------------------
+          # REPORT
+          # ---------------------------------------------------------
 
-            /*
-             * Open-ended requirements such as "1+ years" need
-             * different treatment from "3+ years".
-             *
-             * For a 3-year candidate:
-             *   3+  -> ideal
-             *   2+  -> strong
-             *   1+  -> below target
-             *   4+  -> slight stretch
-             *   5+  -> stretch
-             */
+          top_jobs = ranked[
+              :daily_target
+          ]
 
-            if (range.openEnded) {
-              if (minimum > maximum_years) {
-                return {
-                  score: 0,
-                  penalty: -20,
-                  label: `Experience: ${minimum:g}+ years (mismatch)`
-                };
-              }
+          report = [
+              f"# Daily Job Report — {date.today()}",
+              "",
+              f"**Jobs found:** {len(ranked)}",
+              "",
+              "## 🔥 Top Matches",
+              "",
+          ]
 
-              if (minimum > current_years) {
-                const gap = minimum - current_years;
+          for i, job in enumerate(
+              top_jobs,
+              1
+          ):
+              report.extend(
+                  [
+                      f"### {i}. {job['title']}",
+                      (
+                          f"**{job['company']}** — "
+                          f"{job['location']}"
+                      ),
+                      (
+                          f"**Match score: "
+                          f"{job['score']}/100**"
+                      ),
+                      "",
+                      "**Why:** "
+                      + (
+                          "; ".join(
+                              job["reasons"]
+                          )
+                          if job["reasons"]
+                          else
+                          "Limited information available"
+                      ),
+                      "",
+                      f"**Apply:** {job['url']}",
+                      "",
+                  ]
+              )
 
-                if (gap >= 2) {
-                  return {
-                    score: 4,
-                    penalty: -10,
-                    label: `Experience: ${minimum:g}+ years (significant stretch)`
-                  };
-                }
+          Path(
+              "jobs/daily-report.md"
+          ).write_text(
+              "\n".join(report)
+          )
 
-                return {
-                  score: 6,
-                  penalty: -5,
-                  label: `Experience: ${minimum:g}+ years (slight stretch)`
-                };
-              }
+          Path(
+              "jobs/ranked.json"
+          ).write_text(
+              json.dumps(
+                  ranked,
+                  indent=2
+              )
+          )
 
-              if (minimum >= ideal_minimum_years) {
-                return {
-                  score: 10,
-                  penalty: 0,
-                  label: `Experience: ${minimum:g}+ years (ideal fit)`
-                };
-              }
+          print(
+              "\n".join(report)
+          )
+          PY
 
-              /*
-               * 1+ and 2+ are below the candidate's ideal level.
-               * They are not mismatches, but should not be rewarded
-               * like an ideal 3+ role.
-               */
-              return {
-                score: 5,
-                penalty: 0,
-                label: `Experience: ${minimum:g}+ years (below target)`
-              };
-            }
-
-            /*
-             * Bounded ranges.
-             *
-             * Check the upper bound FIRST so something like 4–12
-             * cannot incorrectly become "slight stretch" merely
-             * because its minimum is above the candidate's current
-             * experience.
-             */
-
-            const excess = maximum - maximum_years;
-
-            if (excess >= 4) {
-              return {
-                score: 0,
-                penalty: -20,
-                label: `Experience: ${minimum:g}–${maximum:g} years (mismatch)`
-              };
-            }
-
-            if (excess >= 2) {
-              return {
-                score: 4,
-                penalty: -10,
-                label: `Experience: ${minimum:g}–${maximum:g} years (significant stretch)`
-              };
-            }
-
-            if (excess > 0) {
-              return {
-                score: 6,
-                penalty: -5,
-                label: `Experience: ${minimum:g}–${maximum:g} years (slight stretch)`
-              };
-            }
-
-            if (
-              minimum >= ideal_minimum_years &&
-              maximum <= ideal_maximum_years
-            ) {
-              return {
-                score: 10,
-                penalty: 0,
-                label: `Experience: ${minimum:g}–${maximum:g} years (ideal fit)`
-              };
-            }
-
-            if (
-              minimum >= minimum_years &&
-              maximum <= maximum_years
-            ) {
-              return {
-                score: 8,
-                penalty: 0,
-                label: `Experience: ${minimum:g}–${maximum:g} years (acceptable fit)`
-              };
-            }
-
-            if (minimum > current_years) {
-              const gap = minimum - current_years;
-
-              if (gap >= 2) {
-                return {
-                  score: 4,
-                  penalty: -10,
-                  label: `Experience: ${minimum:g}–${maximum:g} years (significant stretch)`
-                };
-              }
-
-              return {
-                score: 6,
-                penalty: -5,
-                label: `Experience: ${minimum:g}–${maximum:g} years (slight stretch)`
-              };
-            }
-
-            if (maximum < minimum_years) {
-              return {
-                score: 5,
-                penalty: 0,
-                label: `Experience: ${minimum:g}–${maximum:g} years (below target)`
-              };
-            }
-
-            return {
-              score: 7,
-              penalty: 0,
-              label: `Experience: ${minimum:g}–${maximum:g} years (strong fit)`
-            };
-          }
-
-          function roleScore(job) {
-            const title = titleOf(job);
-
-            for (const role of profile.target_roles.primary) {
-              if (containsTerm(title, role)) {
-                return {
-                  score: 20,
-                  label: "Primary role"
-                };
-              }
-            }
-
-            for (const role of profile.target_roles.secondary) {
-              if (containsTerm(title, role)) {
-                return {
-                  score: 12,
-                  label: "Secondary role"
-                };
-              }
-            }
-
-            const backendTerms = [
-              "backend",
-              "java",
-              "software engineer",
-              "software development engineer",
-              "application developer",
-              "platform engineer"
-            ];
-
-            if (backendTerms.some(term => containsTerm(title, term))) {
-              return {
-                score: 8,
-                label: "Relevant backend role"
-              };
-            }
-
-            return {
-              score: 0,
-              label: ""
-            };
-          }
-
-          function skillScore(job) {
-            const text = textOf(job);
-
-            let highValueMatches = profile.skills.high_value
-              .filter(skill => containsTerm(text, skill));
-
-            let supportingMatches = profile.skills.supporting
-              .filter(skill => containsTerm(text, skill));
-
-            let bonusMatches = profile.skills.bonus
-              .filter(skill => containsTerm(text, skill));
-
-            return {
-              highValueMatches,
-              supportingMatches,
-              bonusMatches,
-
-              score:
-                Math.min(highValueMatches.length * 4, 20) +
-                Math.min(supportingMatches.length * 1.5, 10) +
-                Math.min(bonusMatches.length, 5)
-            };
-          }
-
-          function locationScore(job) {
-            const text = textOf(job);
-
-            let best = null;
-
-            for (const [location, weight] of Object.entries(
-              profile.locations
-            )) {
-              if (containsTerm(text, location)) {
-                if (!best || weight > best.weight) {
-                  best = {
-                    location,
-                    weight
-                  };
-                }
-              }
-            }
-
-            if (!best) {
-              return {
-                score: 0,
-                label: "Location: not prioritized"
-              };
-            }
-
-            return {
-              score: Math.min(best.weight / 33.33, 3),
-              label: `Location: ${best.location}`
-            };
-          }
-
-          function avoidScore(job) {
-            const title = titleOf(job);
-
-            const match = profile.avoid.find(term =>
-              containsTerm(title, term)
-            );
-
-            if (!match) {
-              return {
-                score: 0,
-                label: ""
-              };
-            }
-
-            return {
-              score: -30,
-              label: `Avoid: ${match}`
-            };
-          }
-
-          function calculateScore(job) {
-            const text = textOf(job);
-
-            const mustHaveMatches = profile.skills.must_have
-              .filter(skill => containsTerm(text, skill));
-
-            if (mustHaveMatches.length === 0) {
-              return null;
-            }
-
-            const role = roleScore(job);
-            const skills = skillScore(job);
-            const experience = experienceScore(job);
-            const location = locationScore(job);
-            const avoid = avoidScore(job);
-
-            let score = 0;
-
-            score += mustHaveMatches.length * 20;
-            score += role.score;
-            score += skills.score;
-            score += experience.score;
-            score += experience.penalty;
-            score += location.score;
-            score += avoid.score;
-
-            score = Math.max(0, Math.min(100, Math.round(score)));
-
-            const why = [
-              `Must-have: ${mustHaveMatches.join(", ")}`,
-              role.label,
-              skills.highValueMatches.length
-                ? `High-value skills: ${skills.highValueMatches.join(", ")}`
-                : "",
-              skills.supportingMatches.length
-                ? `Supporting skills: ${skills.supportingMatches.join(", ")}`
-                : "",
-              skills.bonusMatches.length
-                ? `Bonus skills: ${skills.bonusMatches.join(", ")}`
-                : "",
-              experience.label,
-              location.label,
-              avoid.label
-            ].filter(Boolean);
-
-            return {
-              ...job,
-              score,
-              why: why.join("; ")
-            };
-          }
-
-          const ranked = jobs
-            .map(calculateScore)
-            .filter(Boolean)
-            .sort((a, b) => b.score - a.score)
-            .slice(0, profile.daily_target);
-
-          fs.writeFileSync(
-            "jobs/ranked.json",
-            JSON.stringify(ranked, null, 2)
-          );
-
-          let report = `# Daily Job Report — ${new Date()
-            .toISOString()
-            .slice(0, 10)}\n\n`;
-
-          report += `**Jobs found:** ${jobs.length}\n\n`;
-
-          report += `## 🔥 Top Matches\n\n`;
-
-          ranked.forEach((job, index) => {
-            report += `### ${index + 1}. ${job.title || "Untitled"}\n`;
-            report += `**${job.company || "Unknown company"}** — ${
-              job.location || "Location not stated"
-            }\n`;
-            report += `**Match score: ${job.score}/100**\n\n`;
-            report += `**Why:** ${job.why}\n\n`;
-            report += `**Apply:** ${job.url || job.apply_url || ""}\n\n`;
-          });
-
-          fs.writeFileSync(
-            "jobs/daily-report.md",
-            report
-          );
-
-          console.log(`Ranked ${ranked.length} jobs.`);
-          NODE
-
-      - name: Upload daily report
+      - name: Upload job results
         uses: actions/upload-artifact@v4
         with:
-          name: daily-job-report-${{ github.run_number }}
+          name: daily-job-results
           path: jobs/
           retention-days: 30
-
-      - name: Print top jobs
-        shell: bash
-        run: |
-          echo "========================================"
-          echo "TOP JOBS"
-          echo "========================================"
-          cat jobs/daily-report.md
