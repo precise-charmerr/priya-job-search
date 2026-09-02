@@ -1,0 +1,26 @@
+name: Test Resume Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-resume:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compile master resume
+        uses: xu-cheng/latex-action@v3
+        with:
+          root_file: master_resume.tex
+          working_directory: resume
+          args: -pdf -file-line-error -halt-on-error -interaction=nonstopmode
+
+      - name: Upload resume PDF
+        uses: actions/upload-artifact@v4
+        with:
+          name: master-resume
+          path: resume/master_resume.pdf
+          retention-days: 7
