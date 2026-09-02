@@ -1,0 +1,99 @@
+\documentclass[11pt,letterpaper]{article}
+
+\usepackage[margin=0.55in]{geometry}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{mathptmx}
+\usepackage{tabularx}
+
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\linespread{1.0}
+
+\hypersetup{colorlinks=true, urlcolor=blue}
+
+% ---------- Section formatting ----------
+\titleformat{\section}{\large\bfseries}{}{0em}{}
+\titlespacing{\section}{0pt}{6pt}{3pt}
+\newcommand{\sectionrule}{\vspace{-6pt}\hrule\vspace{3pt}}
+
+% Entry header: role/title, dates on line 1; company, location on line 2
+\newcommand{\entryHeader}[4]{%
+  % #1 role  #2 dates  #3 company  #4 location
+  \textbf{#1} \hfill \textit{#2}\\
+  \textbf{#3} \hfill \textit{#4}
+}
+
+\newenvironment{entryList}{%
+  \begin{itemize}[leftmargin=1.3em, itemsep=1.5pt, topsep=2pt, parsep=0pt]
+}{%
+  \end{itemize}\vspace{2pt}
+}
+
+\begin{document}
+
+% ---------------- Header ----------------
+\begin{center}
+  {\LARGE \bfseries Priya Yadav} \\[2pt]
+  {\normalsize Backend Software Engineer} \\[2pt]
+  \small +91 9350046768 ~$\bullet$~
+  \href{mailto:priya2668135@gmail.com}{priya2668135@gmail.com} ~$\bullet$~
+  \href{https://www.linkedin.com/in/priya-yadav-14a44419a/}{LinkedIn} ~$\bullet$~
+  \href{https://github.com/precise-charmerr}{GitHub}
+\end{center}
+
+\vspace{2pt}
+
+% ---------------- Profile ----------------
+\section*{PROFILE}
+\sectionrule
+Backend Software Engineer with 3 years of experience designing, implementing, and optimizing high-performance microservices, REST APIs, and distributed data pipelines using Java, Spring Boot, Python, and SQL. Demonstrated success engineering resilient distributed caching solutions, handling large datasets, and embracing an AI-first engineering workflow. Adept at working in fast-paced Agile environments, leveraging modern CI/CD tools, and driving cross-functional collaboration to deliver secure, production-grade software.
+
+% ---------------- Work Experience ----------------
+\section*{WORK EXPERIENCE}
+\sectionrule
+
+\entryHeader{Software Developer}{Jun 2023 -- Jul 2026}{Deutsche Bank}{Pune, Maharashtra}
+\begin{entryList}
+  \item Architected and implemented a high-availability Redis distributed caching layer to decouple core authorization services, ensuring service reliability and up to 3 days of outage-free operational continuity.
+  \item Designed, tuned, and deployed scalable RESTful APIs with FastAPI/Flask and Java Spring Boot to integrate complex data ingestion and Parquet-based analytics across internal services.
+  \item Optimized data lifecycle management and PySpark ETL pipelines handling 20M+ large data records, cutting pipeline execution runtime and improving database read/write performance.
+  \item Collaborated closely with cross-functional Agile engineering teams, participating in sprint planning, code reviews, and CI/CD automation to uphold robust software quality and security standards.
+  \item Contributed to system observability and on-call rotation readiness, proactively identifying and resolving backend service bottlenecks to maintain high system availability.
+\end{entryList}
+
+% ---------------- Projects ----------------
+\section*{PROJECTS}
+\sectionrule
+
+\entryHeader{Document Q\&A Agent (AI-Powered RAG Service)}{Present}{Independent Project}{Pune, Maharashtra}
+\begin{entryList}
+  \item Developing an agentic Retrieval-Augmented Generation (RAG) backend utilizing Python, FastAPI, and LangGraph to automate document context evaluation and multi-step reasoning.
+  \item Advanced structured prompt engineering and system context management to drive accurate, secure, and production-ready LLM outputs.
+  \item Designed vector search infrastructure (FAISS/Chroma) to efficiently embed, index, and query unstructured data, exposing functionality via clean REST API endpoints.
+\end{entryList}
+
+% ---------------- Skills ----------------
+\section*{SKILLS}
+\sectionrule
+\begin{tabularx}{\textwidth}{@{}p{1.95in}X@{}}
+\textbf{Languages} & Java $\bullet$ Python $\bullet$ SQL $\bullet$ JavaScript $\bullet$ HTML/CSS \\[2pt]
+\textbf{Backend \& Cloud Tech} & Spring Boot $\bullet$ Spring MVC $\bullet$ Microservices $\bullet$ RESTful APIs $\bullet$ Redis $\bullet$ PySpark $\bullet$ FastAPI $\bullet$ Flask $\bullet$ Spring Security \\[2pt]
+\textbf{AI \& Prompt Engineering} & RAG Architecture $\bullet$ LangGraph $\bullet$ Prompt Engineering $\bullet$ Vector Search (FAISS/Chroma) $\bullet$ LLM Integrations \\[2pt]
+\textbf{Tools, DevOps \& Testing} & Git $\bullet$ CI/CD Pipelines $\bullet$ Maven $\bullet$ Postman $\bullet$ MS SQL Server $\bullet$ Elasticsearch $\bullet$ BDD Practices \\[2pt]
+\textbf{Methodologies \& Concepts} & Agile / Scrum $\bullet$ Distributed Systems $\bullet$ Multithreading $\bullet$ System Design $\bullet$ Object-Oriented Programming (OOP) $\bullet$ Code Review \& Security \\
+\end{tabularx}
+
+% ---------------- Education & Achievements ----------------
+\section*{EDUCATION \& ACHIEVEMENTS}
+\sectionrule
+
+\entryHeader{BE in Computer Engineering}{Jul 2019 -- Jun 2023}{Army Institute of Technology}{Pune, Maharashtra}
+\begin{entryList}
+  \item GPA: 8.74/10 | Relevant Coursework: Data Structures \& Algorithms, DBMS, OOP, System Design, Software Engineering
+  \item \textbf{Honors \& Mentorship:} Google WE (Women Engineers) Program Scholar $\bullet$ Microsoft Engage Mentee
+\end{entryList}
+
+\end{document}
