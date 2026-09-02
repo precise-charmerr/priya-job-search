@@ -1,68 +1,95 @@
 {
-  "target_roles": [
-    "Java Backend Engineer",
-    "Java Developer",
-    "Spring Boot Developer",
-    "Backend Software Engineer",
-    "Java Microservices Engineer",
-    "Software Engineer",
-    "Backend Engineer"
-  ],
-  "locations": {
-    "priority_1": [
-      "Pune",
-      "Gurugram",
-      "Gurgaon",
-      "Noida"
+  "target_roles": {
+    "primary": [
+      "Java Backend Developer",
+      "Java Backend Engineer",
+      "Java Software Engineer",
+      "Spring Boot Developer",
+      "Spring Boot Engineer",
+      "Backend Software Engineer"
     ],
-    "priority_2": [
-      "Bengaluru",
-      "Bangalore",
-      "Hyderabad"
-    ],
-    "priority_3": [
-      "Other India",
-      "Remote India"
+    "secondary": [
+      "Software Engineer",
+      "Software Development Engineer",
+      "SDE II",
+      "Java Engineer",
+      "Backend Engineer"
     ]
   },
-  "experience_years": 3,
-  "core_skills": [
-    "Java",
-    "Spring Boot",
-    "Spring MVC",
-    "Spring Security",
-    "Microservices",
-    "REST APIs",
-    "RESTful APIs",
-    "Redis",
-    "SQL",
-    "Python",
-    "FastAPI",
-    "Flask",
-    "Distributed Systems",
-    "Multithreading",
-    "CI/CD",
-    "Maven"
-  ],
-  "secondary_skills": [
-    "PySpark",
-    "Elasticsearch",
-    "AWS",
-    "RAG",
-    "LangGraph",
-    "Vector Search",
-    "FAISS",
-    "Chroma",
-    "LLM",
-    "AI"
-  ],
-  "avoid_or_low_priority": [
+
+  "experience": {
+    "current_years": 3,
+    "minimum_years": 2,
+    "ideal_minimum_years": 3,
+    "ideal_maximum_years": 5,
+    "maximum_years": 6
+  },
+
+  "skills": {
+    "must_have": [
+      "Java"
+    ],
+
+    "high_value": [
+      "Spring Boot",
+      "Microservices",
+      "REST APIs",
+      "Spring MVC",
+      "Spring Security"
+    ],
+
+    "supporting": [
+      "Redis",
+      "SQL",
+      "Kafka",
+      "Distributed Systems",
+      "Multithreading",
+      "Maven",
+      "CI/CD"
+    ],
+
+    "bonus": [
+      "Python",
+      "FastAPI",
+      "Flask",
+      "AWS",
+      "Elasticsearch",
+      "RAG",
+      "LangGraph",
+      "Vector Search",
+      "FAISS",
+      "Chroma",
+      "LLM",
+      "AI"
+    ]
+  },
+
+  "locations": {
+    "Pune": 100,
+    "Gurugram": 95,
+    "Gurgaon": 95,
+    "Noida": 90,
+    "Bengaluru": 75,
+    "Bangalore": 75,
+    "Hyderabad": 70,
+    "Remote India": 65,
+    "Other India": 40
+  },
+
+  "work_mode": {
+    "remote": 100,
+    "hybrid": 80,
+    "onsite": 60
+  },
+
+  "avoid": [
     "Frontend Developer",
     "UI Developer",
-    "Web Designer",
     "Manual Tester",
     "QA Tester",
     "Sales",
     "DevOps Engineer"
-  ]
+  ],
+
+  "daily_target": 50
 }
