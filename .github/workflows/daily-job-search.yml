@@ -386,10 +386,6 @@ jobs:
 
               minimum, maximum, open_ended = result
 
-              # =====================================================
-              # OPEN-ENDED: "X+ years"
-              # =====================================================
-
               if open_ended:
 
                   if minimum > maximum_years:
@@ -433,11 +429,6 @@ jobs:
                       "(below target)"
                   )
 
-              # =====================================================
-              # BOUNDED RANGE: "X-Y years"
-              # =====================================================
-
-              # First check if the upper bound is too high.
               excess = maximum - maximum_years
 
               if excess >= 4:
@@ -464,20 +455,6 @@ jobs:
                       "(slight stretch)"
                   )
 
-              # -----------------------------------------------------
-              # NEW FIX:
-              #
-              # If the entire range ends below the candidate's
-              # ideal minimum, the job is below target.
-              #
-              # Example:
-              # Candidate = 3 years
-              # Job = 1-2 years
-              #
-              # 2 < ideal_minimum_years (3)
-              # therefore -> below target.
-              # -----------------------------------------------------
-
               if maximum < ideal_minimum_years:
                   return (
                       5,
@@ -486,7 +463,6 @@ jobs:
                       "(below target)"
                   )
 
-              # Ideal range.
               if (
                   minimum >= ideal_minimum_years
                   and maximum <= ideal_maximum_years
@@ -498,7 +474,6 @@ jobs:
                       "(ideal fit)"
                   )
 
-              # Acceptable range.
               if (
                   minimum >= minimum_years
                   and maximum <= maximum_years
@@ -510,7 +485,6 @@ jobs:
                       "(acceptable fit)"
                   )
 
-              # Requirement starts above candidate's experience.
               if minimum > current_years:
                   gap = minimum - current_years
 
@@ -670,7 +644,6 @@ jobs:
               )
 
           def score_job(job):
-
               title = job.get("title", "")
               location = job.get("location", "")
 
@@ -873,7 +846,229 @@ jobs:
           )
           PY
 
-      - name: Upload job results
+      - name: Test LLM resume tailoring on top job
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
+
+          api_key = os.environ.get("OPENAI_API_KEY")
+
+          if not api_key:
+              raise RuntimeError(
+                  "OPENAI_API_KEY GitHub secret is not configured."
+              )
+
+          ranked = json.loads(
+              Path("jobs/ranked.json").read_text()
+          )
+
+          detailed = json.loads(
+              Path("jobs/detailed.json").read_text()
+          )
+
+          if not ranked:
+              raise RuntimeError(
+                  "No ranked jobs were found."
+              )
+
+          # For Step 4 we intentionally process only ONE job.
+          top_job = ranked[0]
+          top_job_id = str(top_job["job_id"])
+
+          detailed_by_id = {
+              str(job.get("id")): job
+              for job in detailed.get("results", [])
+          }
+
+          job = detailed_by_id.get(top_job_id)
+
+          if not job:
+              raise RuntimeError(
+                  f"Could not find job {top_job_id} "
+                  "in detailed.json."
+              )
+
+          master_resume = Path(
+              "resume/master_resume.tex"
+          ).read_text()
+
+          job_description = str(
+              job.get("description", "")
+          )
+
+          if not job_description.strip():
+              raise RuntimeError(
+                  f"Job {top_job_id} has no full description."
+              )
+
+          prompt = f"""
+You are a resume tailoring engine.
+
+Analyze the candidate's master resume against the job description below.
+
+IMPORTANT:
+This is a FACTUAL tailoring task.
+
+STRICT RULES:
+
+1. Never invent experience, projects, technologies,
+   responsibilities, achievements, metrics, employers,
+   or dates.
+
+2. Only use information explicitly present in the
+   master resume.
+
+3. You may recommend reordering existing resume
+   content.
+
+4. You may recommend rewriting existing bullets for
+   clarity and relevance, but the factual meaning
+   must remain unchanged.
+
+5. Do not add a technology merely because it appears
+   in the job description.
+
+6. If the job requires something absent from the
+   resume, mark it as missing.
+
+7. Never claim that the candidate has a missing skill.
+
+8. Do not change the candidate's years of experience.
+
+9. Do not create new metrics or achievements.
+
+10. Do not remove factual information merely because
+    it is not mentioned in the job description.
+
+Return ONLY valid JSON.
+
+Use exactly this structure:
+
+{{
+  "job": {{
+    "id": "...",
+    "title": "...",
+    "company": "...",
+    "location": "..."
+  }},
+  "required_skills": [],
+  "matched_skills": [],
+  "missing_skills": [],
+  "most_relevant_experience_bullets": [],
+  "most_relevant_projects": [],
+  "recommended_skill_order": [],
+  "recommended_profile_focus": [],
+  "recommended_bullet_rewrites": [],
+  "tailoring_notes": []
+}}
+
+For recommended_bullet_rewrites:
+- Reference the existing bullet.
+- Provide a suggested rewrite.
+- Preserve its factual meaning.
+- Do not introduce anything not present in the master resume.
+
+MASTER RESUME:
+----------------
+{master_resume}
+----------------
+
+JOB DESCRIPTION:
+----------------
+{job_description}
+----------------
+"""
+
+          payload = {
+              "model": "gpt-5.6-luna",
+              "input": [
+                  {
+                      "role": "system",
+                      "content": (
+                          "You are a precise resume tailoring "
+                          "engine. Follow the factual rules "
+                          "exactly."
+                      ),
+                  },
+                  {
+                      "role": "user",
+                      "content": prompt,
+                  },
+              ],
+          }
+
+          request = urllib.request.Request(
+              "https://api.openai.com/v1/responses",
+              data=json.dumps(payload).encode("utf-8"),
+              headers={
+                  "Authorization": f"Bearer {api_key}",
+                  "Content-Type": "application/json",
+              },
+              method="POST",
+          )
+
+          print(
+              f"Tailoring top job: "
+              f"{job.get('title', '')} | "
+              f"{job.get('company', '')} | "
+              f"ID {top_job_id}"
+          )
+
+          with urllib.request.urlopen(
+              request,
+              timeout=120,
+          ) as response:
+              api_response = json.loads(
+                  response.read().decode("utf-8")
+              )
+
+          output_text = api_response.get(
+              "output_text"
+          )
+
+          if not output_text:
+              raise RuntimeError(
+                  "OpenAI response did not contain "
+                  "output_text."
+              )
+
+          try:
+              tailoring = json.loads(
+                  output_text
+              )
+          except json.JSONDecodeError as exc:
+              print("Raw model output:")
+              print(output_text)
+              raise RuntimeError(
+                  "Model did not return valid JSON."
+              ) from exc
+
+          Path(
+              "jobs/test-tailoring.json"
+          ).write_text(
+              json.dumps(
+                  tailoring,
+                  indent=2,
+                  ensure_ascii=False,
+              )
+          )
+
+          print("\n===== TAILORING RESULT =====")
+          print(
+              json.dumps(
+                  tailoring,
+                  indent=2,
+                  ensure_ascii=False,
+              )
+          )
+          print("============================")
+
+      - name: Upload job and tailoring results
         uses: actions/upload-artifact@v4
         with:
           name: daily-job-results
