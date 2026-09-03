@@ -1117,6 +1117,47 @@ jobs:
                   "Model did not return valid JSON."
               ) from exc
 
+          # Validate that Gemini tailored the exact job selected by the
+          # existing ranking logic. This is an identity check only; it does
+          # not change or recalculate the ranking.
+          tailoring_job = tailoring.get("job")
+          if not isinstance(tailoring_job, dict):
+              raise RuntimeError(
+                  "Gemini tailoring output is missing the expected job object."
+              )
+
+          returned_job_id = str(tailoring_job.get("id", ""))
+          if returned_job_id != top_job_id:
+              raise RuntimeError(
+                  f"Gemini returned tailoring for job ID {returned_job_id!r}, "
+                  f"but the ranked top job is {top_job_id!r}."
+              )
+
+          # Replace model-supplied identity fields with canonical values from
+          # the ranked job so downstream artifacts always identify the real
+          # selected job deterministically.
+          tailoring["job"] = {
+              "id": top_job_id,
+              "title": top_job.get("title", ""),
+              "company": top_job.get("company", ""),
+              "location": top_job.get("location", "")
+          }
+
+          Path("jobs/tailoring-meta.json").write_text(
+              json.dumps(
+                  {
+                      "job_id": top_job_id,
+                      "title": top_job.get("title", ""),
+                      "company": top_job.get("company", ""),
+                      "location": top_job.get("location", ""),
+                      "url": top_job.get("url", ""),
+                      "score": top_job.get("score")
+                  },
+                  indent=2,
+                  ensure_ascii=False,
+              )
+          )
+
           Path(
               "jobs/test-tailoring.json"
           ).write_text(
@@ -1153,6 +1194,12 @@ jobs:
 
           master_resume = Path("resume/master_resume.tex").read_text()
           tailoring = json.loads(Path("jobs/test-tailoring.json").read_text())
+          tailoring_meta = json.loads(Path("jobs/tailoring-meta.json").read_text())
+
+          if str(tailoring.get("job", {}).get("id", "")) != str(tailoring_meta["job_id"]):
+              raise RuntimeError(
+                  "Tailoring output job ID does not match tailoring metadata."
+              )
 
           prompt = f"""
           You are generating the final tailored LaTeX resume for ONE job.
