@@ -846,7 +846,7 @@ jobs:
           )
           PY
 
-      - name: Tailor top 70 jobs with Gemini
+      - name: Tailor top 5 jobs with Gemini
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -1234,9 +1234,9 @@ jobs:
               json.dumps(data, indent=2, ensure_ascii=False)
           )
 
-          if len(successful) < 60:
+          if len(successful) < 5:
               raise RuntimeError(
-                  f"Only {len(successful)} PDFs compiled successfully; at least 60 are required."
+                  f"Only {len(successful)} PDFs compiled successfully; at least 5 are required."
               )
 
           print(f"Compiled PDFs: {len(successful)}")
