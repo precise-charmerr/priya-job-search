@@ -1634,3 +1634,13 @@ jobs:
               f"Excel tracker created: {output_path}"
           )
           PY
+
+      - name: Upload job tracker and tailored resumes
+        uses: actions/upload-artifact@v4
+        with:
+          name: job-search-results
+          path: |
+            jobs/job-tracker.xlsx
+            jobs/tailored-resumes/*.pdf
+          retention-days: 7
+          if-no-files-found: error
