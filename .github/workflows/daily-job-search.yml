@@ -933,64 +933,64 @@ jobs:
                   "companyLocation",
               )
 
-          ai_prompt = f"""
-          You are helping tailor Priya Yadav's resume for a specific job.
+              ai_prompt = f"""
+              You are helping tailor Priya Yadav's resume for a specific job.
           
-          TASK
-          Analyze the job against the candidate profile and master resume below.
-          Produce a tailored resume recommendation that is strictly factual.
+              TASK
+              Analyze the job against the candidate profile and master resume below.
+              Produce a tailored resume recommendation that is strictly factual.
           
-          IMPORTANT RULES
-          - Use ONLY facts explicitly supported by the master resume and candidate skills.
-          - Never invent employers, dates, technologies, metrics, responsibilities,
-            certifications, projects, achievements, or experience.
-          - Do not add a skill merely because it appears in the job description.
-          - You may improve wording and ordering of existing resume content to emphasize
-            relevant experience.
-          - Preserve the candidate's actual employment history and dates.
-          - Do not claim experience with a technology or responsibility that is not
-            supported by the master resume.
-          - Clearly distinguish genuine matches from missing or unsupported requirements.
-          - Keep recommendations ATS-friendly and specific to this job.
-          - Do not fabricate anything.
+              IMPORTANT RULES
+              - Use ONLY facts explicitly supported by the master resume and candidate skills.
+              - Never invent employers, dates, technologies, metrics, responsibilities,
+                certifications, projects, achievements, or experience.
+              - Do not add a skill merely because it appears in the job description.
+              - You may improve wording and ordering of existing resume content to emphasize
+                relevant experience.
+              - Preserve the candidate's actual employment history and dates.
+              - Do not claim experience with a technology or responsibility that is not
+                supported by the master resume.
+              - Clearly distinguish genuine matches from missing or unsupported requirements.
+              - Keep recommendations ATS-friendly and specific to this job.
+              - Do not fabricate anything.
           
-          CANDIDATE SKILLS
-          {json.dumps(candidate_skills, indent=2, ensure_ascii=False)}
+              CANDIDATE SKILLS
+              {json.dumps(candidate_skills, indent=2, ensure_ascii=False)}
           
-          MASTER RESUME
-          {master_resume}
+              MASTER RESUME
+              {master_resume}
           
-          JOB DATA
-          {json.dumps(job, indent=2, ensure_ascii=False)}
+              JOB DATA
+              {json.dumps(job, indent=2, ensure_ascii=False)}
           
-          RANKING DATA
-          {json.dumps({
-              "rank": rank,
-              "score": job.get("score", ""),
-              "role_score": job.get("role_score", ""),
-              "skill_score": job.get("skill_score", ""),
-              "experience_score": job.get("experience_score", ""),
-              "location_score": job.get("location_score", ""),
-              "mode_score": job.get("mode_score", ""),
-              "matched_skills": job.get("matched_skills", []),
-              "missing_skills": job.get("missing_skills", []),
-              "reasons": job.get("reasons", []),
-          }, indent=2, ensure_ascii=False)}
+              RANKING DATA
+              {json.dumps({
+                  "rank": rank,
+                  "score": job.get("score", ""),
+                  "role_score": job.get("role_score", ""),
+                  "skill_score": job.get("skill_score", ""),
+                  "experience_score": job.get("experience_score", ""),
+                  "location_score": job.get("location_score", ""),
+                  "mode_score": job.get("mode_score", ""),
+                  "matched_skills": job.get("matched_skills", []),
+                  "missing_skills": job.get("missing_skills", []),
+                  "reasons": job.get("reasons", []),
+              }, indent=2, ensure_ascii=False)}
           
-          PLEASE RETURN
-          1. Job-fit assessment.
-          2. Strongest matching skills and experience.
-          3. Important gaps or unsupported requirements.
-          4. A tailored profile summary based only on existing facts.
-          5. Recommended rewrites for the most relevant existing experience bullets.
-          6. Recommended rewrites for the most relevant existing project bullets.
-          7. Recommended skill ordering using only skills already present.
-          8. Exactly what should NOT be claimed because it is unsupported.
-          9. A concise final tailoring plan for this job.
+              PLEASE RETURN
+              1. Job-fit assessment.
+              2. Strongest matching skills and experience.
+              3. Important gaps or unsupported requirements.
+              4. A tailored profile summary based only on existing facts.
+              5. Recommended rewrites for the most relevant existing experience bullets.
+              6. Recommended rewrites for the most relevant existing project bullets.
+              7. Recommended skill ordering using only skills already present.
+              8. Exactly what should NOT be claimed because it is unsupported.
+              9. A concise final tailoring plan for this job.
           
-          Do not invent facts. Do not output fabricated metrics, skills, employers, dates,
-          projects, certifications, or responsibilities.
-          """.strip()
+              Do not invent facts. Do not output fabricated metrics, skills, employers, dates,
+              projects, certifications, or responsibilities.
+              """.strip()
 
               row = [
                   rank,
