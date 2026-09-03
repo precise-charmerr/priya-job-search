@@ -1127,11 +1127,29 @@ jobs:
               )
 
           returned_job_id = str(tailoring_job.get("id", ""))
-          if returned_job_id != top_job_id:
+          returned_title = str(tailoring_job.get("title", "")).strip().casefold()
+          returned_company = str(tailoring_job.get("company", "")).strip().casefold()
+          expected_title = str(top_job.get("title", "")).strip().casefold()
+          expected_company = str(top_job.get("company", "")).strip().casefold()
+
+          # Gemini may normalize or invent a human-readable ID instead of
+          # preserving the source job ID. Therefore the ID itself is not used
+          # as the model-output identity check. We validate the stable job
+          # identity fields we supplied to Gemini, then replace all identity
+          # fields with the canonical values from the ranked job.
+          if returned_title != expected_title or returned_company != expected_company:
               raise RuntimeError(
-                  f"Gemini returned tailoring for job ID {returned_job_id!r}, "
-                  f"but the ranked top job is {top_job_id!r}."
+                  "Gemini returned tailoring for a different job. "
+                  f"Expected {top_job.get('title', '')!r} | "
+                  f"{top_job.get('company', '')!r}, but received "
+                  f"{tailoring_job.get('title', '')!r} | "
+                  f"{tailoring_job.get('company', '')!r}."
               )
+
+          print(
+              "Gemini job identity verified by title/company. "
+              f"Model ID={returned_job_id!r}; canonical ID={top_job_id!r}."
+          )
 
           # Replace model-supplied identity fields with canonical values from
           # the ranked job so downstream artifacts always identify the real
@@ -1231,7 +1249,11 @@ jobs:
               resume. Tailor wording and ordering only where supported by the
               tailoring analysis.
           11. Do not add a new section.
-          12. Return ONLY valid JSON with exactly one field named "tex" whose
+          12. The JOB object in the tailoring output must refer to the exact
+              job supplied below. Preserve its title and company exactly.
+              Do not substitute another job. The source job ID is shown for
+              reference, but downstream workflow code will canonicalize it.
+          13. Return ONLY valid JSON with exactly one field named "tex" whose
               value is the complete LaTeX source file as a string.
 
           The output must compile with pdflatex.
