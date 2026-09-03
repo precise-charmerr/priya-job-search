@@ -622,6 +622,7 @@ jobs:
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
+          python - <<'PY'
           import json
           import os
           import re
@@ -1653,7 +1654,6 @@ jobs:
 
       - name: Create Excel job tracker
         run: |
-          python - <<'PY'
           python - <<'PY'
           import json
           from pathlib import Path
