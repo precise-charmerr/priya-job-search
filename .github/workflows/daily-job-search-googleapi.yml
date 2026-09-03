@@ -1445,7 +1445,9 @@ jobs:
                   f"Only {len(results)} tailored resumes were generated; "
                   f"at least {MINIMUM_JOBS} are required."
               )
-          PY      - name: Compile tailored resumes
+          PY
+
+      - name: Compile tailored resumes
         run: |
           sudo apt-get update
           sudo apt-get install -y texlive-latex-extra poppler-utils
