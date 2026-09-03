@@ -848,7 +848,7 @@ jobs:
 
       - name: Test LLM resume tailoring on top job
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python - <<'PY'
           import json
@@ -856,11 +856,11 @@ jobs:
           import urllib.request
           from pathlib import Path
 
-          api_key = os.environ.get("OPENAI_API_KEY")
+          api_key = os.environ.get("GEMINI_API_KEY")
 
           if not api_key:
               raise RuntimeError(
-                  "OPENAI_API_KEY GitHub secret is not configured."
+                  "GEMINI_API_KEY GitHub secret is not configured."
               )
 
           ranked = json.loads(
@@ -908,47 +908,47 @@ jobs:
 
           prompt = f"""
           You are a resume tailoring engine.
-          
+
           Analyze the candidate's master resume against the job description below.
-          
+
           IMPORTANT:
           This is a FACTUAL tailoring task.
-          
+
           STRICT RULES:
-          
+
           1. Never invent experience, projects, technologies,
              responsibilities, achievements, metrics, employers,
              or dates.
-          
+
           2. Only use information explicitly present in the
              master resume.
-          
+
           3. You may recommend reordering existing resume
              content.
-          
+
           4. You may recommend rewriting existing bullets for
              clarity and relevance, but the factual meaning
              must remain unchanged.
-          
+
           5. Do not add a technology merely because it appears
              in the job description.
-          
+
           6. If the job requires something absent from the
              resume, mark it as missing.
-          
+
           7. Never claim that the candidate has a missing skill.
-          
+
           8. Do not change the candidate's years of experience.
-          
+
           9. Do not create new metrics or achievements.
-          
+
           10. Do not remove factual information merely because
               it is not mentioned in the job description.
-          
+
           Return ONLY valid JSON.
-          
+
           Use exactly this structure:
-          
+
           {{
             "job": {{
               "id": "...",
@@ -966,18 +966,18 @@ jobs:
             "recommended_bullet_rewrites": [],
             "tailoring_notes": []
           }}
-          
+
           For recommended_bullet_rewrites:
           - Reference the existing bullet.
           - Provide a suggested rewrite.
           - Preserve its factual meaning.
           - Do not introduce anything not present in the master resume.
-          
+
           MASTER RESUME:
           ----------------
           {master_resume}
           ----------------
-          
+
           JOB DESCRIPTION:
           ----------------
           {job_description}
@@ -985,28 +985,26 @@ jobs:
           """
 
           payload = {
-              "model": "gpt-5.6-luna",
-              "input": [
-                  {
-                      "role": "system",
-                      "content": (
-                          "You are a precise resume tailoring "
-                          "engine. Follow the factual rules "
-                          "exactly."
-                      ),
-                  },
+              "contents": [
                   {
                       "role": "user",
-                      "content": prompt,
-                  },
+                      "parts": [
+                          {
+                              "text": prompt
+                          }
+                      ]
+                  }
               ],
+              "generationConfig": {
+                  "responseMimeType": "application/json"
+              }
           }
 
           request = urllib.request.Request(
-              "https://api.openai.com/v1/responses",
+              "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent",
               data=json.dumps(payload).encode("utf-8"),
               headers={
-                  "Authorization": f"Bearer {api_key}",
+                  "x-goog-api-key": api_key,
                   "Content-Type": "application/json",
               },
               method="POST",
@@ -1027,15 +1025,23 @@ jobs:
                   response.read().decode("utf-8")
               )
 
-          output_text = api_response.get(
-              "output_text"
-          )
-
-          if not output_text:
-              raise RuntimeError(
-                  "OpenAI response did not contain "
-                  "output_text."
+          try:
+              output_text = (
+                  api_response["candidates"][0]
+                  ["content"]["parts"][0]["text"]
               )
+          except (KeyError, IndexError, TypeError) as exc:
+              print("Raw Gemini response:")
+              print(
+                  json.dumps(
+                      api_response,
+                      indent=2,
+                      ensure_ascii=False,
+                  )
+              )
+              raise RuntimeError(
+                  "Gemini response did not contain generated text."
+              ) from exc
 
           try:
               tailoring = json.loads(
