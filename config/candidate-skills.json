@@ -1,0 +1,32 @@
+{
+  "skills": {
+    "strong": [
+      "Java",
+      "Spring Boot",
+      "Spring MVC",
+      "Spring Security",
+      "Microservices",
+      "REST APIs",
+      "Redis",
+      "SQL",
+      "Python",
+      "FastAPI",
+      "Flask",
+      "Git",
+      "Maven",
+      "CI/CD",
+      "Distributed Systems",
+      "Multithreading",
+      "System Design",
+      "Object-Oriented Programming",
+      "Agile"
+    ],
+    "working_knowledge": [
+      "Hibernate",
+      "Kafka",
+      "MySQL"
+    ],
+    "familiar": [
+    ]
+  }
+}
