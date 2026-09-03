@@ -992,8 +992,8 @@ jobs:
 
               FINAL RESUME REQUIREMENTS
               - Return a complete standalone .tex resume, not snippets.
-              - Start with \\documentclass and include all required packages,
-                preamble, document structure, and \\end{document}.
+              - Start with the LaTeX \\documentclass command and include all required packages,
+                preamble, document structure, and the \\end{document} command.
               - The final LaTeX must compile directly with pdflatex without manual edits.
               - Preserve the master resume's existing structure, formatting approach,
                 section organization, and overall style unless a small formatting
