@@ -846,9 +846,9 @@ jobs:
           )
           PY
 
-      - name: Tailor top 5 jobs with Gemini
+      - name: Tailor top 1 job with OpenRouter
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           python - <<'PY'
           import hashlib
@@ -860,17 +860,16 @@ jobs:
           import urllib.request
           from pathlib import Path
 
-          API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent"
-          # TARGET_JOBS = 
-          # MINIMUM_JOBS = 60
-          TARGET_JOBS = 5
-          MINIMUM_JOBS = 5
+          API_URL = "https://openrouter.ai/api/v1/chat/completions"
+          MODEL = "openrouter/free"
+          TARGET_JOBS = 1
+          MINIMUM_JOBS = 1
           MAX_RETRIES = 6
           SUCCESS_DELAY_SECONDS = 4
 
-          api_key = os.environ.get("GEMINI_API_KEY")
+          api_key = os.environ.get("OPENROUTER_API_KEY")
           if not api_key:
-              raise RuntimeError("GEMINI_API_KEY GitHub secret is not configured.")
+              raise RuntimeError("OPENROUTER_API_KEY GitHub secret is not configured.")
 
           ranked = json.loads(Path("jobs/ranked.json").read_text())
           detailed = json.loads(Path("jobs/detailed.json").read_text())
@@ -893,20 +892,21 @@ jobs:
 
           def extract_text(api_response):
               try:
-                  return api_response["candidates"][0]["content"]["parts"][0]["text"]
+                  return api_response["choices"][0]["message"]["content"]
               except (KeyError, IndexError, TypeError) as exc:
                   raise RuntimeError(
-                      "Gemini response did not contain generated text."
+                      "OpenRouter response did not contain generated text."
                   ) from exc
 
-          def call_gemini(prompt):
+          def call_openrouter(prompt):
               payload = {
-                  "contents": [{
+                  "model": MODEL,
+                  "messages": [{
                       "role": "user",
-                      "parts": [{"text": prompt}],
+                      "content": prompt,
                   }],
-                  "generationConfig": {
-                      "responseMimeType": "application/json"
+                  "response_format": {
+                      "type": "json_object"
                   },
               }
 
@@ -914,8 +914,10 @@ jobs:
                   API_URL,
                   data=json.dumps(payload).encode("utf-8"),
                   headers={
-                      "x-goog-api-key": api_key,
+                      "Authorization": f"Bearer {api_key}",
                       "Content-Type": "application/json",
+                      "HTTP-Referer": "https://github.com/precise-charmerr/priya-job-search",
+                      "X-Title": "Priya Job Search",
                   },
                   method="POST",
               )
@@ -928,7 +930,7 @@ jobs:
                       body = exc.read().decode("utf-8", errors="replace")
                       retryable = exc.code in {429, 500, 502, 503, 504}
                       if not retryable or attempt == MAX_RETRIES:
-                          print(f"Gemini HTTP {exc.code}: {body[:1000]}")
+                          print(f"OpenRouter HTTP {exc.code}: {body[:1000]}")
                           raise
 
                       retry_after = exc.headers.get("Retry-After")
@@ -941,7 +943,7 @@ jobs:
                           delay = min(90, 10 * (2 ** (attempt - 1)))
 
                       print(
-                          f"Gemini HTTP {exc.code}; retry {attempt}/{MAX_RETRIES} "
+                          f"OpenRouter HTTP {exc.code}; retry {attempt}/{MAX_RETRIES} "
                           f"after {delay:g}s"
                       )
                       time.sleep(delay)
@@ -950,12 +952,12 @@ jobs:
                           raise
                       delay = min(90, 10 * (2 ** (attempt - 1)))
                       print(
-                          f"Gemini network error; retry {attempt}/{MAX_RETRIES} "
+                          f"OpenRouter network error; retry {attempt}/{MAX_RETRIES} "
                           f"after {delay:g}s: {exc}"
                       )
                       time.sleep(delay)
 
-              raise RuntimeError("Gemini request failed after retries.")
+              raise RuntimeError("OpenRouter request failed after retries.")
 
           def safe_filename(value):
               return re.sub(r"[^A-Za-z0-9._-]+", "-", str(value)).strip("-")
@@ -1069,7 +1071,7 @@ jobs:
           """
 
               try:
-                  api_response = call_gemini(prompt)
+                  api_response = call_openrouter(prompt)
                   output_text = extract_text(api_response)
                   result = json.loads(output_text)
                   tailored_tex = result.get("tex")
@@ -1234,9 +1236,9 @@ jobs:
               json.dumps(data, indent=2, ensure_ascii=False)
           )
 
-          if len(successful) < 5:
+          if len(successful) < 1:
               raise RuntimeError(
-                  f"Only {len(successful)} PDFs compiled successfully; at least 5 are required."
+                  f"Only {len(successful)} PDFs compiled successfully; at least 1 is required."
               )
 
           print(f"Compiled PDFs: {len(successful)}")
@@ -1279,8 +1281,7 @@ jobs:
           for cell in ws[1]:
               cell.font = Font(bold=True)
 
-          # for rank, job in enumerate(ranked[:70], 1):
-          for rank, job in enumerate(ranked[:5], 1):
+                    for rank, job in enumerate(ranked[:1], 1):
               job_id = str(job.get("job_id", ""))
               detail = detailed_by_id.get(job_id, {})
               result = tailoring_by_id.get(job_id, {})
