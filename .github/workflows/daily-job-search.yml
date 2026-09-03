@@ -892,7 +892,10 @@ jobs:
 
           def extract_text(api_response):
               try:
-                  return api_response["choices"][0]["message"]["content"]
+                  content = api_response["choices"][0]["message"]["content"]
+                  if not isinstance(content, str) or not content.strip():
+                      raise RuntimeError("OpenRouter returned empty generated content.")
+                  return content
               except (KeyError, IndexError, TypeError) as exc:
                   raise RuntimeError(
                       "OpenRouter response did not contain generated text."
@@ -906,8 +909,41 @@ jobs:
                       "content": prompt,
                   }],
                   "response_format": {
-                      "type": "json_object"
+                      "type": "json_schema",
+                      "json_schema": {
+                          "name": "tailored_resume",
+                          "strict": True,
+                          "schema": {
+                              "type": "object",
+                              "properties": {
+                                  "required_skills": {"type": "array", "items": {"type": "string"}},
+                                  "matched_skills": {"type": "array", "items": {"type": "string"}},
+                                  "missing_skills": {"type": "array", "items": {"type": "string"}},
+                                  "most_relevant_experience_bullets": {"type": "array", "items": {"type": "string"}},
+                                  "most_relevant_projects": {"type": "array", "items": {"type": "string"}},
+                                  "recommended_skill_order": {"type": "array", "items": {"type": "string"}},
+                                  "recommended_profile_focus": {"type": "array", "items": {"type": "string"}},
+                                  "recommended_bullet_rewrites": {"type": "array", "items": {"type": "string"}},
+                                  "tailoring_notes": {"type": "array", "items": {"type": "string"}},
+                                  "tex": {"type": "string"}
+                              },
+                              "required": [
+                                  "required_skills",
+                                  "matched_skills",
+                                  "missing_skills",
+                                  "most_relevant_experience_bullets",
+                                  "most_relevant_projects",
+                                  "recommended_skill_order",
+                                  "recommended_profile_focus",
+                                  "recommended_bullet_rewrites",
+                                  "tailoring_notes",
+                                  "tex"
+                              ],
+                              "additionalProperties": False
+                          }
+                      }
                   },
+                  "max_tokens": 12000,
               }
 
               request = urllib.request.Request(
@@ -1024,19 +1060,10 @@ jobs:
              listed as a skill but must not be used to fabricate experience.
           10. The job identity supplied below is CANONICAL. Do not invent or alter it.
 
-          Return ONLY valid JSON with exactly these fields:
-          {{
-            "required_skills": [],
-            "matched_skills": [],
-            "missing_skills": [],
-            "most_relevant_experience_bullets": [],
-            "most_relevant_projects": [],
-            "recommended_skill_order": [],
-            "recommended_profile_focus": [],
-            "recommended_bullet_rewrites": [],
-            "tailoring_notes": [],
-            "tex": "complete LaTeX source"
-          }}
+          Return the response using the provided JSON schema.
+          The "tex" field must contain the complete LaTeX source as a JSON string.
+          Escape all backslashes, quotes, and newlines according to JSON encoding.
+          Do not use Markdown code fences and do not add any fields outside the schema.
 
           For recommended_bullet_rewrites, reference an existing bullet and provide a rewrite
           that preserves its factual meaning. Do not introduce unsupported claims.
@@ -1077,13 +1104,13 @@ jobs:
                   tailored_tex = result.get("tex")
 
                   if not isinstance(tailored_tex, str) or not tailored_tex.strip().startswith("\\documentclass"):
-                      raise RuntimeError("Gemini returned invalid LaTeX.")
+                      raise RuntimeError("OpenRouter returned invalid LaTeX.")
 
                   tex_path = output_dir / f"{job_key}.tex"
                   tailoring_path = output_dir / f"{job_key}.json"
                   tex_path.write_text(tailored_tex)
 
-                  # Gemini is never authoritative for identity.
+                  # OpenRouter is never authoritative for identity.
                   tailoring_record = {
                       "job": {
                           "id": job_id,
@@ -1281,7 +1308,8 @@ jobs:
           for cell in ws[1]:
               cell.font = Font(bold=True)
 
-                    for rank, job in enumerate(ranked[:1], 1):
+          # for rank, job in enumerate(ranked[:70], 1):
+          for rank, job in enumerate(ranked[:1], 1):
               job_id = str(job.get("job_id", ""))
               detail = detailed_by_id.get(job_id, {})
               result = tailoring_by_id.get(job_id, {})
