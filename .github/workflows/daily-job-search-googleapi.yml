@@ -780,6 +780,22 @@ jobs:
                       response.read().decode("utf-8")
                   )
 
+          def remove_additional_properties(schema):
+              if isinstance(schema, dict):
+                  return {
+                      key: remove_additional_properties(value)
+                      for key, value in schema.items()
+                      if key != "additionalProperties"
+                  }
+
+              if isinstance(schema, list):
+                  return [
+                      remove_additional_properties(item)
+                      for item in schema
+                  ]
+
+              return schema
+
           def call_gemini(prompt):
               api_key = os.environ.get("GEMINI_API_KEY")
 
@@ -801,7 +817,9 @@ jobs:
                   ],
                   "generationConfig": {
                       "responseMimeType": "application/json",
-                      "responseSchema": TAILORING_SCHEMA,
+                      "responseSchema": remove_additional_properties(
+                          TAILORING_SCHEMA
+                      ),
                       "temperature": 0.2,
                   }
               }
@@ -1124,6 +1142,55 @@ jobs:
                           prompt,
                       )
 
+                      if not isinstance(data, dict):
+                          raise RuntimeError(
+                              "Provider returned a non-object response."
+                          )
+
+                      required_keys = [
+                          "profile_summary",
+                          "experience_bullets",
+                          "project_bullets",
+                          "recommended_skill_order",
+                          "tailoring_notes",
+                      ]
+
+                      missing = [
+                          key
+                          for key in required_keys
+                          if key not in data
+                      ]
+
+                      if missing:
+                          raise RuntimeError(
+                              "Provider returned incomplete tailoring JSON; "
+                              f"missing: {missing}"
+                          )
+
+                      if not isinstance(
+                          data.get("profile_summary"),
+                          str,
+                      ) or not data["profile_summary"].strip():
+                          raise RuntimeError(
+                              "Provider returned an empty profile_summary."
+                          )
+
+                      if not isinstance(
+                          data.get("experience_bullets"),
+                          list,
+                      ):
+                          raise RuntimeError(
+                              "experience_bullets must be a list."
+                          )
+
+                      if not isinstance(
+                          data.get("project_bullets"),
+                          list,
+                      ):
+                          raise RuntimeError(
+                              "project_bullets must be a list."
+                          )
+
                       print(
                           f"Provider succeeded: {provider}"
                       )
@@ -1146,8 +1213,6 @@ jobs:
                           f"Provider failed: {message}"
                       )
 
-                      # Move to the next provider for transient, quota,
-                      # permission, or unavailable-provider errors.
                       continue
 
                   except Exception as exc:
@@ -1166,6 +1231,9 @@ jobs:
                   "All providers failed: "
                   + " | ".join(errors)
               )
+
+          results = []
+          failures = []
 
           for index, ranked_job in enumerate(
               selected,
