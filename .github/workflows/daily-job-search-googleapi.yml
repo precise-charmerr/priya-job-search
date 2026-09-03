@@ -1415,10 +1415,15 @@ jobs:
           from openpyxl import Workbook
           from openpyxl.styles import Font
 
-          ranked = json.loads(
+          ranked_data = json.loads(
               Path(
                   "jobs/ranked.json"
               ).read_text()
+          )
+
+          ranked = ranked_data.get(
+              "results",
+              []
           )
 
           detailed = json.loads(
