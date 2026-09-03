@@ -1344,3 +1344,4 @@ jobs:
               if resume_file:
                   ws.cell(row=row, column=16).hyperlink = resume_file
                   ws.cell(row=row, column=16).font = Font(color="0000FF", underline="single")
+          PY
