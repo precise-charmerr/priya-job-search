@@ -662,7 +662,7 @@ jobs:
           }
 
           # TODO CHANGE HERE: set 60 for the full batch run
-          TARGET_JOBS = min(len(ranked), 2)
+          TARGET_JOBS = min(len(ranked), 5)
           MINIMUM_JOBS = 1
 
           selected = []
@@ -1501,9 +1501,9 @@ jobs:
                       bold=True
                   )
 
-          # TODO CHANGE HERE: change 2 to 60 for the full batch run
+          # TODO CHANGE HERE: change 5 to 60 for the full batch run
           for rank, job in enumerate(
-              ranked[:min(len(ranked), 2)],
+              ranked[:min(len(ranked), 5)],
               1
           ):
               job_id = str(
