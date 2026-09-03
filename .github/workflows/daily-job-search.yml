@@ -897,6 +897,10 @@ jobs:
               "resume/master_resume.tex"
           ).read_text()
 
+          candidate_skills = json.loads(
+              Path("config/candidate-skills.json").read_text()
+          )
+
           job_description = str(
               job.get("description", "")
           )
@@ -920,30 +924,52 @@ jobs:
              responsibilities, achievements, metrics, employers,
              or dates.
 
-          2. Only use information explicitly present in the
-             master resume.
+          2. The MASTER RESUME is the source of truth for the
+             candidate's professional experience, projects,
+             achievements, metrics, employers, and dates.
 
-          3. You may recommend reordering existing resume
-             content.
+          3. CANDIDATE SKILLS is a separate source of truth for
+             skills the candidate genuinely knows, even if those
+             skills are not currently written in the master resume.
 
-          4. You may recommend rewriting existing bullets for
-             clarity and relevance, but the factual meaning
-             must remain unchanged.
+          4. You may include skills from CANDIDATE SKILLS in the
+             tailored resume's Skills section when relevant to the
+             job. Do not invent experience using those skills.
 
-          5. Do not add a technology merely because it appears
-             in the job description.
+          5. A skill listed under working_knowledge or familiar
+             does NOT mean professional experience. Never write a
+             work/project bullet claiming that the candidate built,
+             designed, deployed, or used that technology unless the
+             MASTER RESUME explicitly supports that claim.
 
-          6. If the job requires something absent from the
-             resume, mark it as missing.
+          6. You may recommend reordering existing resume content.
 
-          7. Never claim that the candidate has a missing skill.
+          7. You may recommend rewriting existing bullets for
+             clarity and relevance, but the factual meaning must
+             remain unchanged.
 
-          8. Do not change the candidate's years of experience.
+          8. Do not add a technology merely because it appears in
+             the job description. It must be supported either by
+             the MASTER RESUME or CANDIDATE SKILLS.
 
-          9. Do not create new metrics or achievements.
+          9. If the job requires a skill that is supported by
+             CANDIDATE SKILLS but absent from the MASTER RESUME,
+             do NOT classify it as an unknown skill. Treat it as a
+             candidate-known skill without resume evidence.
 
-          10. Do not remove factual information merely because
-              it is not mentioned in the job description.
+          10. If the job requires a skill that appears in neither
+              the MASTER RESUME nor CANDIDATE SKILLS, mark it as
+              missing.
+
+          11. Never claim that the candidate has a skill that is
+              absent from both sources.
+
+          12. Do not change the candidate's years of experience.
+
+          13. Do not create new metrics or achievements.
+
+          14. Do not remove factual information merely because it
+              is not mentioned in the job description.
 
           Return ONLY valid JSON.
 
@@ -976,6 +1002,11 @@ jobs:
           MASTER RESUME:
           ----------------
           {master_resume}
+          ----------------
+
+          CANDIDATE SKILLS:
+          ----------------
+          {json.dumps(candidate_skills, indent=2, ensure_ascii=False)}
           ----------------
 
           JOB DESCRIPTION:
