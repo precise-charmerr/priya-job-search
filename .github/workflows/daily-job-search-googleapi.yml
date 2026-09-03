@@ -661,7 +661,8 @@ jobs:
               )
           }
 
-          TARGET_JOBS = 1
+          # TODO CHANGE HERE: set 60 for the full batch run
+          TARGET_JOBS = min(len(ranked), 2)
           MINIMUM_JOBS = 1
 
           selected = []
@@ -1500,12 +1501,11 @@ jobs:
                       bold=True
                   )
 
+          # TODO CHANGE HERE: change 2 to 60 for the full batch run
           for rank, job in enumerate(
-              ranked,
+              ranked[:min(len(ranked), 2)],
               1
           ):
-              if rank > 1:
-                  break
               job_id = str(
                   job.get(
                       "job_id",
