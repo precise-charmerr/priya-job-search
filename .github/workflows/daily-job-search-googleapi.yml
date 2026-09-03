@@ -648,6 +648,11 @@ jobs:
               []
           )
 
+          if not isinstance(ranked, list):
+              raise RuntimeError(
+                  f"Expected ranked results to be a list, got {type(ranked).__name__}"
+              )
+
           detailed_by_id = {
               str(job.get("id")): job
               for job in detailed_data.get(
@@ -659,7 +664,11 @@ jobs:
           TARGET_JOBS = 1
           MINIMUM_JOBS = 1
 
-          selected = ranked[:TARGET_JOBS]
+          selected = []
+          for job in ranked:
+              selected.append(job)
+              if len(selected) >= TARGET_JOBS:
+                  break
 
           output_dir = Path(
               "jobs/tailored-resumes"
@@ -1482,15 +1491,21 @@ jobs:
 
           ws.append(headers)
 
-          for cell in ws[1]:
-              cell.font = Font(
-                  bold=True
-              )
+          for row in ws.iter_rows(
+              min_row=1,
+              max_row=1
+          ):
+              for cell in row:
+                  cell.font = Font(
+                      bold=True
+                  )
 
           for rank, job in enumerate(
-              ranked[:1],
+              ranked,
               1
           ):
+              if rank > 1:
+                  break
               job_id = str(
                   job.get(
                       "job_id",
