@@ -1191,7 +1191,7 @@ jobs:
       - name: Compile tailored resumes
         run: |
           sudo apt-get update
-          sudo apt-get install -y texlive-latex-extra
+          sudo apt-get install -y texlive-latex-extra poppler-utils
           python - <<'PY'
           import json
           import shutil
