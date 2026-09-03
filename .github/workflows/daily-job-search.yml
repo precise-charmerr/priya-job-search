@@ -1,0 +1,1123 @@
+name: Daily Job Search
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 3 * * *"
+
+jobs:
+  search-jobs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Create jobs directory
+        run: mkdir -p jobs
+
+      - name: Search jobs across locations and queries
+        run: |
+          python - <<'PY'
+          import subprocess
+          from pathlib import Path
+
+          cli = ".agents/skills/linkedin-search/cli/src/cli.ts"
+
+          queries = [
+              "Java Backend Developer",
+              "Java Developer Spring Boot",
+              "Java Microservices",
+              "Spring Boot Backend",
+              "Java Software Engineer",
+          ]
+
+          locations = [
+              ("pune", "Pune, Maharashtra, India"),
+              ("gurugram", "Gurugram, Haryana, India"),
+              ("noida", "Noida, Uttar Pradesh, India"),
+              ("bengaluru", "Bengaluru, Karnataka, India"),
+              ("hyderabad", "Hyderabad, Telangana, India"),
+              ("remote", "Remote India"),
+          ]
+
+          total = 0
+
+          for location_key, location in locations:
+              for query_index, query in enumerate(queries, 1):
+                  output_file = Path(
+                      f"jobs/search-{location_key}-{query_index}.json"
+                  )
+
+                  print(f"Searching: {query} | {location}")
+
+                  try:
+                      result = subprocess.run(
+                          [
+                              "bun",
+                              "run",
+                              cli,
+                              "search",
+                              "--query",
+                              query,
+                              "--location",
+                              location,
+                              "--jobage",
+                              "1",
+                              "--limit",
+                              "8",
+                              "--format",
+                              "json",
+                          ],
+                          capture_output=True,
+                          text=True,
+                          timeout=60,
+                      )
+
+                      if result.returncode == 0:
+                          output_file.write_text(result.stdout)
+                          total += 1
+                      else:
+                          print(
+                              f"Search failed for {query} | {location}: "
+                              f"{result.stderr[:500]}"
+                          )
+
+                  except Exception as exc:
+                      print(
+                          f"Search error for {query} | {location}: {exc}"
+                      )
+
+          print(f"Successful searches: {total}/30")
+          PY
+
+      - name: Combine and deduplicate results
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          jobs = []
+          seen = set()
+
+          for file in Path("jobs").glob("search-*.json"):
+              try:
+                  data = json.loads(file.read_text())
+              except Exception as exc:
+                  print(f"Skipping invalid {file}: {exc}")
+                  continue
+
+              for job in data.get("results", []):
+                  job_id = job.get("id")
+
+                  if job_id and job_id not in seen:
+                      seen.add(job_id)
+                      jobs.append(job)
+
+          output = {
+              "count": len(jobs),
+              "results": jobs,
+          }
+
+          Path("jobs/all.json").write_text(
+              json.dumps(output, indent=2)
+          )
+
+          print(f"Unique jobs collected: {len(jobs)}")
+          PY
+
+      - name: Fetch job details
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+          import time
+          from pathlib import Path
+
+          cli = ".agents/skills/linkedin-search/cli/src/cli.ts"
+
+          data = json.loads(
+              Path("jobs/all.json").read_text()
+          )
+
+          detailed = []
+          results = data.get("results", [])
+
+          for i, job in enumerate(results, 1):
+              job_id = job["id"]
+
+              print(
+                  f"[{i}/{len(results)}] "
+                  f"Fetching {job_id} - {job.get('title', '')}"
+              )
+
+              try:
+                  result = subprocess.run(
+                      [
+                          "bun",
+                          "run",
+                          cli,
+                          "detail",
+                          job_id,
+                          "--format",
+                          "json",
+                      ],
+                      capture_output=True,
+                      text=True,
+                      timeout=30,
+                  )
+
+                  if result.returncode == 0:
+                      detail = json.loads(result.stdout)
+
+                      if isinstance(detail, dict):
+                          job.update(detail)
+
+                  else:
+                      print(
+                          f"Detail fetch failed for {job_id}: "
+                          f"{result.stderr[:300]}"
+                      )
+
+                  detailed.append(job)
+
+              except Exception as exc:
+                  print(
+                      f"Error fetching {job_id}: {exc}"
+                  )
+                  detailed.append(job)
+
+              time.sleep(1)
+
+          Path("jobs/detailed.json").write_text(
+              json.dumps(
+                  {
+                      "count": len(detailed),
+                      "results": detailed,
+                  },
+                  indent=2,
+              )
+          )
+
+          print(
+              f"Detailed jobs collected: {len(detailed)}"
+          )
+          PY
+
+      - name: Create ranked report
+        run: |
+          python - <<'PY'
+          import json
+          import re
+          from datetime import date
+          from pathlib import Path
+
+          profile = json.loads(
+              Path("config/job-profile.json").read_text()
+          )
+
+          data = json.loads(
+              Path("jobs/detailed.json").read_text()
+          )
+
+          target_roles = profile.get(
+              "target_roles",
+              {}
+          )
+
+          primary_roles = [
+              x.lower()
+              for x in target_roles.get("primary", [])
+          ]
+
+          secondary_roles = [
+              x.lower()
+              for x in target_roles.get("secondary", [])
+          ]
+
+          experience = profile.get(
+              "experience",
+              {}
+          )
+
+          current_years = float(
+              experience.get("current_years", 0)
+          )
+
+          minimum_years = float(
+              experience.get("minimum_years", 0)
+          )
+
+          ideal_minimum_years = float(
+              experience.get("ideal_minimum_years", 0)
+          )
+
+          ideal_maximum_years = float(
+              experience.get("ideal_maximum_years", 0)
+          )
+
+          maximum_years = float(
+              experience.get("maximum_years", 0)
+          )
+
+          skills = profile.get(
+              "skills",
+              {}
+          )
+
+          must_have = [
+              x.lower()
+              for x in skills.get("must_have", [])
+          ]
+
+          high_value = [
+              x.lower()
+              for x in skills.get("high_value", [])
+          ]
+
+          supporting = [
+              x.lower()
+              for x in skills.get("supporting", [])
+          ]
+
+          bonus = [
+              x.lower()
+              for x in skills.get("bonus", [])
+          ]
+
+          locations = {
+              k.lower(): float(v)
+              for k, v in profile.get(
+                  "locations",
+                  {}
+              ).items()
+          }
+
+          avoid = [
+              x.lower()
+              for x in profile.get("avoid", [])
+          ]
+
+          daily_target = int(
+              profile.get("daily_target", 50)
+          )
+
+          def normalize(value):
+              return re.sub(
+                  r"\s+",
+                  " ",
+                  str(value or "").lower()
+              ).strip()
+
+          def job_text(job):
+              return " ".join(
+                  [
+                      str(job.get("title", "")),
+                      str(job.get("description", "")),
+                      str(job.get("requirements", "")),
+                      str(job.get("experience", "")),
+                  ]
+              )
+
+          def extract_experience_range(text):
+              patterns = [
+                  (
+                      r"(\d+(?:\.\d+)?)\s*"
+                      r"(?:-|–|—|to)\s*"
+                      r"(\d+(?:\.\d+)?)\s*"
+                      r"(?:\+)?\s*(?:years?|yrs?)"
+                  ),
+                  (
+                      r"(\d+(?:\.\d+)?)\s*\+\s*"
+                      r"(?:years?|yrs?)"
+                  ),
+                  (
+                      r"(\d+(?:\.\d+)?)\s*"
+                      r"(?:years?|yrs?)"
+                  ),
+              ]
+
+              ranges = []
+
+              for pattern in patterns:
+                  for match in re.finditer(
+                      pattern,
+                      text,
+                      flags=re.IGNORECASE,
+                  ):
+                      if match.lastindex == 2:
+                          low = float(match.group(1))
+                          high = float(match.group(2))
+
+                          ranges.append(
+                              (low, high, False)
+                          )
+                      else:
+                          low = float(match.group(1))
+
+                          if "+" in match.group(0):
+                              ranges.append(
+                                  (low, float("inf"), True)
+                              )
+                          else:
+                              ranges.append(
+                                  (low, low, False)
+                              )
+
+              if not ranges:
+                  return None
+
+              return ranges
+
+          def experience_score(text):
+              ranges = extract_experience_range(text)
+
+              if not ranges:
+                  return 0, None
+
+              best_score = 0
+              best_range = None
+
+              for low, high, open_ended in ranges:
+                  if (
+                      high < minimum_years
+                      or low > maximum_years
+                  ):
+                      continue
+
+                  if (
+                      low <= ideal_minimum_years
+                      and (
+                          open_ended
+                          or high >= ideal_maximum_years
+                      )
+                  ):
+                      score = 20
+                  elif (
+                      low <= current_years
+                      and (
+                          open_ended
+                          or high >= current_years
+                      )
+                  ):
+                      score = 16
+                  elif (
+                      low <= ideal_maximum_years
+                      and (
+                          open_ended
+                          or high >= ideal_minimum_years
+                      )
+                  ):
+                      score = 12
+                  else:
+                      score = 8
+
+                  if score > best_score:
+                      best_score = score
+                      best_range = (low, high)
+
+              return best_score, best_range
+
+          def role_score(title):
+              normalized = normalize(title)
+
+              if normalized in primary_roles:
+                  return 30, "Primary role match"
+
+              if any(
+                  role in normalized
+                  for role in primary_roles
+              ):
+                  return 25, "Strong role match"
+
+              if normalized in secondary_roles:
+                  return 20, "Secondary role match"
+
+              if any(
+                  role in normalized
+                  for role in secondary_roles
+              ):
+                  return 15, "Related role match"
+
+              return 0, "Weak role match"
+
+          def skill_score(text):
+              score = 0
+              matched = []
+              missing = []
+
+              for skill in must_have:
+                  if skill in text:
+                      score += 20
+                      matched.append(skill)
+                  else:
+                      missing.append(skill)
+
+              for skill in high_value:
+                  if skill in text:
+                      score += 6
+                      matched.append(skill)
+
+              for skill in supporting:
+                  if skill in text:
+                      score += 3
+                      matched.append(skill)
+
+              for skill in bonus:
+                  if skill in text:
+                      score += 1
+                      matched.append(skill)
+
+              return min(score, 30), matched, missing
+
+          def location_score(location):
+              normalized = normalize(location)
+
+              best = 0
+              best_match = None
+
+              for location_name, score in locations.items():
+                  if location_name in normalized:
+                      if score > best:
+                          best = score
+                          best_match = location_name
+
+              return best, best_match
+
+          ranked = []
+
+          for job in data.get("results", []):
+              title = job.get("title", "")
+              location = job.get("location", "")
+              text = normalize(job_text(job))
+
+              role_points, role_reason = role_score(title)
+              skill_points, matched, missing = skill_score(text)
+              loc_points, loc_match = location_score(location)
+              exp_points, exp_range = experience_score(text)
+
+              avoid_matches = [
+                  term
+                  for term in avoid
+                  if term in text
+              ]
+
+              avoid_penalty = len(avoid_matches) * 20
+
+              mode_points = 0
+              mode_reason = ""
+
+              if "remote" in normalize(location):
+                  mode_points = 10
+                  mode_reason = "Remote"
+              elif "hybrid" in text:
+                  mode_points = 8
+                  mode_reason = "Hybrid"
+              elif "onsite" in text or "on-site" in text:
+                  mode_points = 6
+                  mode_reason = "Onsite"
+
+              total_score = (
+                  role_points
+                  + skill_points
+                  + loc_points * 0.2
+                  + exp_points
+                  + mode_points
+                  - avoid_penalty
+              )
+
+              reasons = [
+                  role_reason,
+                  f"Skills: {len(matched)} matched",
+              ]
+
+              if loc_match:
+                  reasons.append(
+                      f"Location: {loc_match}"
+                  )
+
+              if exp_range:
+                  reasons.append(
+                      f"Experience: {exp_range[0]}-{exp_range[1]}"
+                  )
+
+              if mode_reason:
+                  reasons.append(mode_reason)
+
+              if avoid_matches:
+                  reasons.append(
+                      f"Avoid terms: {', '.join(avoid_matches)}"
+                  )
+
+              job_copy = dict(job)
+
+              job_copy["score"] = round(
+                  total_score,
+                  2
+              )
+
+              job_copy["matched_skills"] = sorted(
+                  set(matched)
+              )
+
+              job_copy["missing_skills"] = sorted(
+                  set(missing)
+              )
+
+              job_copy["experience_score"] = exp_points
+              job_copy["role_score"] = role_points
+              job_copy["skill_score"] = skill_points
+              job_copy["location_score"] = loc_points
+              job_copy["mode_score"] = mode_points
+              job_copy["reasons"] = reasons
+
+              ranked.append(job_copy)
+
+          ranked.sort(
+              key=lambda job: (
+                  job.get("score", 0),
+                  job.get("role_score", 0),
+                  job.get("skill_score", 0),
+                  job.get("experience_score", 0),
+              ),
+              reverse=True,
+          )
+
+          for rank, job in enumerate(
+              ranked,
+              1
+          ):
+              job["rank"] = rank
+
+          output = {
+              "generated_on": date.today().isoformat(),
+              "count": len(ranked),
+              "daily_target": daily_target,
+              "results": ranked,
+          }
+
+          Path("jobs/ranked.json").write_text(
+              json.dumps(
+                  output,
+                  indent=2,
+                  ensure_ascii=False,
+              )
+          )
+
+          print(
+              f"Ranked jobs: {len(ranked)}"
+          )
+          PY
+
+
+      - name: Create full Excel job tracker
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install openpyxl
+
+          python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          from openpyxl import Workbook
+          from openpyxl.styles import Font, Alignment
+          from openpyxl.utils import get_column_letter
+
+          ranked_data = json.loads(
+              Path("jobs/ranked.json").read_text()
+          )
+
+          detailed_data = json.loads(
+              Path("jobs/detailed.json").read_text()
+          )
+
+          ranked = ranked_data.get("results", [])
+          detailed = detailed_data.get("results", [])
+
+          if not isinstance(ranked, list):
+              raise RuntimeError(
+                  "jobs/ranked.json does not contain a results list."
+              )
+
+          detailed_by_id = {
+              str(job.get("id")): job
+              for job in detailed
+              if job.get("id") is not None
+          }
+
+          def first_value(job, *keys):
+              for key in keys:
+                  value = job.get(key)
+                  if value is not None and value != "":
+                      return value
+              return ""
+
+          def stringify(value):
+              if value is None:
+                  return ""
+
+              if isinstance(value, (dict, list)):
+                  return json.dumps(
+                      value,
+                      ensure_ascii=False,
+                      indent=2,
+                  )
+
+              return str(value)
+
+          def list_to_text(value):
+              if value is None:
+                  return ""
+
+              if isinstance(value, list):
+                  return ", ".join(
+                      stringify(item).replace("\n", " ")
+                      for item in value
+                  )
+
+              return stringify(value)
+
+          def normalize_job_for_excel(job):
+              result = dict(job)
+
+              # Make sure the detailed version wins where available.
+              job_id = str(
+                  first_value(
+                      job,
+                      "job_id",
+                      "id",
+                  )
+              )
+
+              if job_id in detailed_by_id:
+                  detailed_job = detailed_by_id[job_id]
+                  merged = dict(detailed_job)
+                  merged.update(job)
+                  result = merged
+
+              return result
+
+          workbook = Workbook()
+
+          ws = workbook.active
+          ws.title = "Job Tracker"
+
+          headers = [
+              "Rank",
+              "Job ID",
+              "Title",
+              "Company",
+              "Location",
+              "Score",
+              "Role Score",
+              "Skill Score",
+              "Experience Score",
+              "Location Score",
+              "Work Mode Score",
+              "Matched Skills",
+              "Missing Skills",
+              "Ranking Reasons",
+              "Posted Date",
+              "Posted Time",
+              "Listed Date",
+              "Job Age / Freshness",
+              "Employment Type",
+              "Experience",
+              "Salary",
+              "Work Mode",
+              "Job URL",
+              "Apply URL",
+              "Description",
+              "Requirements",
+              "Qualifications",
+              "Responsibilities",
+              "Benefits",
+              "Skills",
+              "Company Description",
+              "Company URL",
+              "Company Location",
+              "All Job Data (JSON)",
+          ]
+
+          ws.append(headers)
+
+          for cell in ws[1]:
+              cell.font = Font(bold=True)
+              cell.alignment = Alignment(
+                  horizontal="center",
+                  vertical="center",
+                  wrap_text=True,
+              )
+
+          for rank, ranked_job in enumerate(ranked, 1):
+              job = normalize_job_for_excel(ranked_job)
+
+              job_id = str(
+                  first_value(
+                      job,
+                      "job_id",
+                      "id",
+                  )
+              )
+
+              title = first_value(
+                  job,
+                  "title",
+                  "job_title",
+              )
+
+              company = first_value(
+                  job,
+                  "company",
+                  "company_name",
+                  "employer",
+              )
+
+              location = first_value(
+                  job,
+                  "location",
+                  "job_location",
+              )
+
+              score = first_value(
+                  job,
+                  "score",
+              )
+
+              reasons = first_value(
+                  job,
+                  "reasons",
+              )
+
+              posted_date = first_value(
+                  job,
+                  "posted_date",
+                  "date_posted",
+                  "postedDate",
+                  "date",
+              )
+
+              posted_time = first_value(
+                  job,
+                  "posted_time",
+                  "time_posted",
+                  "postedTime",
+              )
+
+              listed_date = first_value(
+                  job,
+                  "listed_date",
+                  "listedDate",
+              )
+
+              freshness = first_value(
+                  job,
+                  "job_age",
+                  "jobage",
+                  "age",
+              )
+
+              employment_type = first_value(
+                  job,
+                  "employment_type",
+                  "employmentType",
+                  "job_type",
+                )
+
+              experience = first_value(
+                  job,
+                  "experience",
+                  "experience_required",
+                  "experienceRange",
+              )
+
+              salary = first_value(
+                  job,
+                  "salary",
+                  "salary_range",
+                  "compensation",
+              )
+
+              work_mode = first_value(
+                  job,
+                  "work_mode",
+                  "workMode",
+                  "remote_type",
+              )
+
+              job_url = first_value(
+                  job,
+                  "url",
+                  "job_url",
+                  "jobUrl",
+                  "linkedin_url",
+                )
+
+              apply_url = first_value(
+                  job,
+                  "apply_url",
+                  "applyUrl",
+                  "application_url",
+              )
+
+              description = first_value(
+                  job,
+                  "description",
+                  "job_description",
+                  "full_description",
+              )
+
+              requirements = first_value(
+                  job,
+                  "requirements",
+                  "required_qualifications",
+                  "requiredQualifications",
+              )
+
+              qualifications = first_value(
+                  job,
+                  "qualifications",
+                  "qualification",
+              )
+
+              responsibilities = first_value(
+                  job,
+                  "responsibilities",
+                  "duties",
+              )
+
+              benefits = first_value(
+                  job,
+                  "benefits",
+                  "perks",
+              )
+
+              skills = first_value(
+                  job,
+                  "skills",
+                  "required_skills",
+                  "technologies",
+              )
+
+              company_description = first_value(
+                  job,
+                  "company_description",
+                  "companyDescription",
+                )
+
+              company_url = first_value(
+                  job,
+                  "company_url",
+                  "companyUrl",
+                  "employer_url",
+              )
+
+              company_location = first_value(
+                  job,
+                  "company_location",
+                  "companyLocation",
+              )
+
+              row = [
+                  rank,
+                  job_id,
+                  title,
+                  company,
+                  location,
+                  score,
+                  job.get("role_score", ""),
+                  job.get("skill_score", ""),
+                  job.get("experience_score", ""),
+                  job.get("location_score", ""),
+                  job.get("mode_score", ""),
+                  list_to_text(job.get("matched_skills", [])),
+                  list_to_text(job.get("missing_skills", [])),
+                  list_to_text(reasons),
+                  stringify(posted_date),
+                  stringify(posted_time),
+                  stringify(listed_date),
+                  stringify(freshness),
+                  list_to_text(employment_type),
+                  stringify(experience),
+                  stringify(salary),
+                  stringify(work_mode),
+                  stringify(job_url),
+                  stringify(apply_url),
+                  stringify(description),
+                  stringify(requirements),
+                  stringify(qualifications),
+                  stringify(responsibilities),
+                  stringify(benefits),
+                  stringify(skills),
+                  stringify(company_description),
+                  stringify(company_url),
+                  stringify(company_location),
+                  json.dumps(
+                      job,
+                      ensure_ascii=False,
+                      indent=2,
+                  ),
+              ]
+
+              ws.append(row)
+
+              # Make URL fields clickable when they are real URLs.
+              url_columns = {
+                  "Job URL": 22,
+                  "Apply URL": 23,
+                  "Company URL": 32,
+              }
+
+              for header, col_num in url_columns.items():
+                  cell = ws.cell(
+                      row=ws.max_row,
+                      column=col_num,
+                  )
+
+                  value = cell.value
+                  if (
+                      isinstance(value, str)
+                      and value.startswith(("http://", "https://"))
+                  ):
+                      cell.hyperlink = value
+                      cell.style = "Hyperlink"
+
+          ws.freeze_panes = "A2"
+          ws.auto_filter.ref = ws.dimensions
+          ws.row_dimensions[1].height = 30
+
+          # Practical widths so the workbook opens usable immediately.
+          widths = {
+              1: 8,
+              2: 15,
+              3: 38,
+              4: 28,
+              5: 32,
+              6: 10,
+              7: 12,
+              8: 12,
+              9: 15,
+              10: 14,
+              11: 16,
+              12: 32,
+              13: 32,
+              14: 42,
+              15: 18,
+              16: 15,
+              17: 18,
+              18: 18,
+              19: 22,
+              20: 20,
+              21: 20,
+              22: 16,
+              23: 48,
+              24: 48,
+              25: 80,
+              26: 70,
+              27: 60,
+              28: 70,
+              29: 50,
+              30: 45,
+              31: 60,
+              32: 45,
+              33: 45,
+              34: 90,
+          }
+
+          for column_number, width in widths.items():
+              ws.column_dimensions[
+                  get_column_letter(column_number)
+              ].width = width
+
+          # Wrap long text in the tracker.
+          for row in ws.iter_rows(
+              min_row=2,
+              max_row=ws.max_row,
+          ):
+              for cell in row:
+                  cell.alignment = Alignment(
+                      vertical="top",
+                      wrap_text=True,
+                  )
+
+          # Add a compact summary sheet.
+          summary = workbook.create_sheet("Run Summary")
+
+          generated_at = datetime.now(
+              timezone.utc
+          ).strftime(
+              "%Y-%m-%d %H:%M:%S UTC"
+          )
+
+          summary_rows = [
+              ("Generated At", generated_at),
+              ("Search Window", "Last 1 day"),
+              ("Search Queries", 5),
+              ("Search Locations", 6),
+              ("Search Combinations", 30),
+              ("Unique Jobs Found", len(ranked)),
+              ("Excel Rows", len(ranked)),
+              ("Ranking Applied", "Yes — existing ranking logic"),
+              ("AI Tailoring", "No"),
+              ("PDF Generation", "No"),
+          ]
+
+          for row_index, (label, value) in enumerate(
+              summary_rows,
+              1,
+          ):
+              summary.cell(
+                  row=row_index,
+                  column=1,
+                  value=label,
+              )
+              summary.cell(
+                  row=row_index,
+                  column=2,
+                  value=value,
+              )
+
+          for cell in summary["A"]:
+              cell.font = Font(bold=True)
+
+          summary.column_dimensions["A"].width = 28
+          summary.column_dimensions["B"].width = 45
+
+          summary["A12"] = "Purpose"
+          summary["A12"].font = Font(bold=True)
+          summary["B12"] = (
+              "This workbook contains all jobs returned by the configured "
+              "last-1-day search, deduplicated, enriched with job details, "
+              "and sorted using the existing ranking logic. No resume "
+              "tailoring or PDF/LLM steps are executed."
+          )
+          summary["B12"].alignment = Alignment(
+              wrap_text=True,
+              vertical="top",
+          )
+          summary.row_dimensions[12].height = 90
+
+          output_path = Path(
+              "jobs/job-tracker.xlsx"
+          )
+
+          workbook.save(output_path)
+
+          print(
+              f"Created {output_path} with {len(ranked)} jobs."
+          )
+          PY
+
+      - name: Upload full Excel job tracker
+        uses: actions/upload-artifact@v4
+        with:
+          name: job-search-excel
+          path: jobs/job-tracker.xlsx
+          retention-days: 30
+          if-no-files-found: error
