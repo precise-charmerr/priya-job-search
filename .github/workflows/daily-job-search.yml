@@ -1105,6 +1105,132 @@ jobs:
           )
           print("============================")
 
+      - name: Generate tailored LaTeX resume
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
+
+          api_key = os.environ.get("GEMINI_API_KEY")
+          if not api_key:
+              raise RuntimeError("GEMINI_API_KEY GitHub secret is not configured.")
+
+          master_resume = Path("resume/master_resume.tex").read_text()
+          tailoring = json.loads(Path("jobs/test-tailoring.json").read_text())
+
+          prompt = f"""
+          You are generating the final tailored LaTeX resume for ONE job.
+
+          This is a strict factual transformation task.
+
+          NON-NEGOTIABLE RULES:
+          1. The MASTER RESUME is the source of truth for all professional
+             experience, projects, achievements, metrics, employers, dates,
+             education, contact information, and factual claims.
+          2. The CANDIDATE SKILLS file may be used only to list genuinely known
+             skills in the Skills section. Never turn a candidate skill into a
+             fabricated work/project achievement.
+          3. Skills under working_knowledge or familiar must NEVER be used in
+             an Experience or Project bullet unless the master resume itself
+             explicitly supports that usage.
+          4. Every rewritten Experience/Project bullet must correspond to an
+             existing master-resume bullet and preserve its factual meaning.
+          5. Do not add employers, job titles, dates, certifications, degrees,
+             metrics, responsibilities, technologies, or projects.
+          6. Do not change contact information or education details.
+          7. Do not change the candidate's years of experience.
+          8. Do not claim a job-description technology was used unless it is
+             supported by the MASTER RESUME or is a genuinely known skill from
+             CANDIDATE SKILLS. Even then, it may be listed as a skill only; do
+             not fabricate experience around it.
+          9. Preserve the existing one-page resume structure and formatting.
+          10. Keep the same sections and overall visual style as the master
+              resume. Tailor wording and ordering only where supported by the
+              tailoring analysis.
+          11. Do not add a new section.
+          12. Return ONLY valid JSON with exactly one field named "tex" whose
+              value is the complete LaTeX source file as a string.
+
+          The output must compile with pdflatex.
+
+          MASTER RESUME:
+          ----------------
+          {master_resume}
+          ----------------
+
+          CANDIDATE SKILLS:
+          ----------------
+          {json.dumps(json.loads(Path("config/candidate-skills.json").read_text()), indent=2, ensure_ascii=False)}
+          ----------------
+
+          TAILORING ANALYSIS:
+          ----------------
+          {json.dumps(tailoring, indent=2, ensure_ascii=False)}
+          ----------------
+
+          Generate the complete tailored .tex now.
+          """
+
+          payload = {
+              "contents": [
+                  {
+                      "role": "user",
+                      "parts": [{"text": prompt}],
+                  }
+              ],
+              "generationConfig": {
+                  "responseMimeType": "application/json"
+              },
+          }
+
+          request = urllib.request.Request(
+              "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent",
+              data=json.dumps(payload).encode("utf-8"),
+              headers={
+                  "x-goog-api-key": api_key,
+                  "Content-Type": "application/json",
+              },
+              method="POST",
+          )
+
+          print("Generating final tailored LaTeX resume...")
+          with urllib.request.urlopen(request, timeout=120) as response:
+              api_response = json.loads(response.read().decode("utf-8"))
+
+          try:
+              output_text = api_response["candidates"][0]["content"]["parts"][0]["text"]
+          except (KeyError, IndexError, TypeError) as exc:
+              print(json.dumps(api_response, indent=2, ensure_ascii=False))
+              raise RuntimeError("Gemini response did not contain generated text.") from exc
+
+          try:
+              result = json.loads(output_text)
+              tailored_tex = result["tex"]
+          except (json.JSONDecodeError, KeyError, TypeError) as exc:
+              print("Raw model output:")
+              print(output_text)
+              raise RuntimeError("Gemini did not return the expected {\\"tex\\": ...} JSON.") from exc
+
+          if not tailored_tex.strip().startswith("\\documentclass"):
+              raise RuntimeError("Generated LaTeX does not start with \\documentclass.")
+
+          Path("jobs/tailored-resume.tex").write_text(tailored_tex)
+          print("Wrote jobs/tailored-resume.tex")
+
+      - name: Compile tailored resume PDF
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y texlive-latex-extra
+          cd jobs
+          pdflatex -interaction=nonstopmode -halt-on-error tailored-resume.tex
+          pdflatex -interaction=nonstopmode -halt-on-error tailored-resume.tex
+          test -s tailored-resume.pdf
+          echo "Generated PDF: jobs/tailored-resume.pdf"
+
       - name: Upload job and tailoring results
         uses: actions/upload-artifact@v4
         with:
