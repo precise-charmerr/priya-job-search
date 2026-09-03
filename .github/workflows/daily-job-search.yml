@@ -861,8 +861,10 @@ jobs:
           from pathlib import Path
 
           API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent"
-          TARGET_JOBS = 70
-          MINIMUM_JOBS = 60
+          # TARGET_JOBS = 
+          # MINIMUM_JOBS = 60
+          TARGET_JOBS = 5
+          MINIMUM_JOBS = 5
           MAX_RETRIES = 6
           SUCCESS_DELAY_SECONDS = 4
 
@@ -1277,7 +1279,8 @@ jobs:
           for cell in ws[1]:
               cell.font = Font(bold=True)
 
-          for rank, job in enumerate(ranked[:70], 1):
+          # for rank, job in enumerate(ranked[:70], 1):
+          for rank, job in enumerate(ranked[:5], 1):
               job_id = str(job.get("job_id", ""))
               detail = detailed_by_id.get(job_id, {})
               result = tailoring_by_id.get(job_id, {})
