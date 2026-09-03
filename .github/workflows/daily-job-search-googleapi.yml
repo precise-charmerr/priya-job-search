@@ -614,7 +614,7 @@ jobs:
           )
           PY
 
-      - name: Tailor top 1 job with Google Gemini
+      - name: Tailor top 5 jobs with multi-provider structured tailoring
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -622,7 +622,6 @@ jobs:
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          python - <<'PY'
           import json
           import os
           import re
@@ -647,124 +646,180 @@ jobs:
               "resume/master_resume.tex"
           ).read_text()
 
-          ranked = ranked_data.get(
-              "results",
-              []
-          )
+          ranked = ranked_data.get("results", [])
 
           if not isinstance(ranked, list):
               raise RuntimeError(
-                  f"Expected ranked results to be a list, got {type(ranked).__name__}"
+                  "Expected ranked results to be a list."
               )
 
           detailed_by_id = {
               str(job.get("id")): job
-              for job in detailed_data.get(
-                  "results",
-                  []
-              )
+              for job in detailed_data.get("results", [])
           }
 
           # TODO CHANGE HERE: set 60 for the full batch run
           TARGET_JOBS = min(len(ranked), 5)
           MINIMUM_JOBS = 1
 
-          selected = []
-          for job in ranked:
-              selected.append(job)
-              if len(selected) >= TARGET_JOBS:
-                  break
+          selected = ranked[:TARGET_JOBS]
 
-          output_dir = Path(
-              "jobs/tailored-resumes"
-          )
+          output_dir = Path("jobs/tailored-resumes")
           output_dir.mkdir(
               parents=True,
               exist_ok=True
           )
 
-          api_key = os.environ.get(
-              "GEMINI_API_KEY"
-          )
+          PROVIDER_CHAIN = [
+              "gemini",
+              "openrouter",
+              "groq",
+              "cerebras",
+              "huggingface",
+          ]
 
-          if not api_key:
-              raise RuntimeError(
-                  "GEMINI_API_KEY is not configured."
-              )
-
-          MODEL = "gemini-3.7-flash"
-
-          results = []
-          failures = []
-
-          def make_job_key(job_id):
-              raw = str(job_id)
-              return re.sub(
-                  r"[^A-Za-z0-9_-]",
-                  "",
-                  raw,
-              )[:24]
-
-          RESPONSE_SCHEMA = {
+          TAILORING_SCHEMA = {
               "type": "object",
               "properties": {
-                  "required_skills": {
-                      "type": "array",
-                      "items": {"type": "string"}
+                  "profile_summary": {
+                      "type": "string"
                   },
-                  "matched_skills": {
+                  "experience_bullets": {
                       "type": "array",
-                      "items": {"type": "string"}
+                      "items": {
+                          "type": "object",
+                          "properties": {
+                              "source": {
+                                  "type": "string"
+                              },
+                              "rewrite": {
+                                  "type": "string"
+                              }
+                          },
+                          "required": [
+                              "source",
+                              "rewrite"
+                          ],
+                          "additionalProperties": False
+                      }
                   },
-                  "missing_skills": {
+                  "project_bullets": {
                       "type": "array",
-                      "items": {"type": "string"}
-                  },
-                  "most_relevant_experience_bullets": {
-                      "type": "array",
-                      "items": {"type": "string"}
-                  },
-                  "most_relevant_projects": {
-                      "type": "array",
-                      "items": {"type": "string"}
+                      "items": {
+                          "type": "object",
+                          "properties": {
+                              "source": {
+                                  "type": "string"
+                              },
+                              "rewrite": {
+                                  "type": "string"
+                              }
+                          },
+                          "required": [
+                              "source",
+                              "rewrite"
+                          ],
+                          "additionalProperties": False
+                      }
                   },
                   "recommended_skill_order": {
                       "type": "array",
-                      "items": {"type": "string"}
-                  },
-                  "recommended_profile_focus": {
-                      "type": "array",
-                      "items": {"type": "string"}
-                  },
-                  "recommended_bullet_rewrites": {
-                      "type": "array",
-                      "items": {"type": "string"}
+                      "items": {
+                          "type": "string"
+                      }
                   },
                   "tailoring_notes": {
                       "type": "array",
-                      "items": {"type": "string"}
-                  },
-                  "tex": {
-                      "type": "string"
+                      "items": {
+                          "type": "string"
+                      }
                   }
               },
               "required": [
-                  "required_skills",
-                  "matched_skills",
-                  "missing_skills",
-                  "most_relevant_experience_bullets",
-                  "most_relevant_projects",
+                  "profile_summary",
+                  "experience_bullets",
+                  "project_bullets",
                   "recommended_skill_order",
-                  "recommended_profile_focus",
-                  "recommended_bullet_rewrites",
-                  "tailoring_notes",
-                  "tex"
+                  "tailoring_notes"
               ],
               "additionalProperties": False
           }
 
-          def extract_gemini_text(api_response):
-              candidates = api_response.get(
+          def parse_json_object(text):
+              try:
+                  return json.loads(text)
+              except json.JSONDecodeError:
+                  start = text.find("{")
+                  end = text.rfind("}")
+
+                  if start >= 0 and end > start:
+                      return json.loads(
+                          text[start:end + 1]
+                      )
+
+                  raise
+
+          def post_json(
+              url,
+              payload,
+              headers,
+          ):
+              request = urllib.request.Request(
+                  url,
+                  data=json.dumps(payload).encode("utf-8"),
+                  headers=headers,
+                  method="POST",
+              )
+
+              with urllib.request.urlopen(
+                  request,
+                  timeout=180,
+              ) as response:
+                  return json.loads(
+                      response.read().decode("utf-8")
+                  )
+
+          def call_gemini(prompt):
+              api_key = os.environ.get("GEMINI_API_KEY")
+
+              if not api_key:
+                  raise RuntimeError(
+                      "GEMINI_API_KEY is not configured."
+                  )
+
+              payload = {
+                  "contents": [
+                      {
+                          "role": "user",
+                          "parts": [
+                              {
+                                  "text": prompt
+                              }
+                          ]
+                      }
+                  ],
+                  "generationConfig": {
+                      "responseMimeType": "application/json",
+                      "responseSchema": TAILORING_SCHEMA,
+                      "temperature": 0.2,
+                  }
+              }
+
+              url = (
+                  "https://generativelanguage.googleapis.com/"
+                  "v1beta/models/gemini-3.7-flash:generateContent"
+                  f"?key={api_key}"
+              )
+
+              response = post_json(
+                  url,
+                  payload,
+                  {
+                      "Content-Type": "application/json"
+                  },
+              )
+
+              candidates = response.get(
                   "candidates",
                   []
               )
@@ -789,86 +844,16 @@ jobs:
                   and isinstance(part.get("text"), str)
               )
 
-              if output.strip():
-                  return output
-
-              raise RuntimeError(
-                  "Gemini response did not contain text content."
-              )
-
-          def extract_openai_text(api_response, provider):
-              choices = api_response.get(
-                  "choices",
-                  []
-              )
-
-              if not choices:
+              if not output.strip():
                   raise RuntimeError(
-                      f"{provider} returned no choices."
+                      "Gemini returned no text content."
                   )
 
-              message = choices[0].get(
-                  "message",
-                  {}
-              )
-
-              content = message.get(
-                  "content"
-              )
-
-              if isinstance(content, str) and content.strip():
-                  return content
-
-              raise RuntimeError(
-                  f"{provider} returned no usable text content."
-              )
-
-          def call_gemini(prompt):
-              payload = {
-                  "contents": [
-                      {
-                          "role": "user",
-                          "parts": [
-                              {
-                                  "text": prompt
-                              }
-                          ]
-                      }
-                  ],
-                  "generationConfig": {
-                      "responseMimeType": "application/json",
-                      "temperature": 0.2,
-                  }
-              }
-
-              endpoint = (
-                  "https://generativelanguage.googleapis.com/"
-                  "v1beta/models/gemini-3.7-flash:generateContent"
-                  f"?key={os.environ['GEMINI_API_KEY']}"
-              )
-
-              request = urllib.request.Request(
-                  endpoint,
-                  data=json.dumps(
-                      payload
-                  ).encode("utf-8"),
-                  headers={
-                      "Content-Type": "application/json"
-                  },
-                  method="POST",
-              )
-
-              with urllib.request.urlopen(
-                  request,
-                  timeout=180,
-              ) as response:
-                  return json.loads(
-                      response.read().decode("utf-8")
-                  )
+              return parse_json_object(output)
 
           def call_openai_compatible(
               provider,
-              endpoint,
+              url,
               api_key,
               model,
               prompt,
@@ -885,12 +870,12 @@ jobs:
                   "response_format": {
                       "type": "json_schema",
                       "json_schema": {
-                          "name": "tailored_resume",
+                          "name": "resume_tailoring",
                           "strict": True,
-                          "schema": RESPONSE_SCHEMA,
+                          "schema": TAILORING_SCHEMA,
                       }
                   },
-                  "max_tokens": 12000,
+                  "max_tokens": 6000,
               }
 
               headers = {
@@ -901,33 +886,40 @@ jobs:
               if extra_headers:
                   headers.update(extra_headers)
 
-              request = urllib.request.Request(
-                  endpoint,
-                  data=json.dumps(
-                      payload
-                  ).encode("utf-8"),
-                  headers=headers,
-                  method="POST",
+              response = post_json(
+                  url,
+                  payload,
+                  headers,
               )
 
-              with urllib.request.urlopen(
-                  request,
-                  timeout=180,
-              ) as response:
-                  return json.loads(
-                      response.read().decode("utf-8")
+              choices = response.get(
+                  "choices",
+                  []
+              )
+
+              if not choices:
+                  raise RuntimeError(
+                      f"{provider} returned no choices."
                   )
 
-          def call_provider(provider, prompt):
+              content = choices[0].get(
+                  "message",
+                  {}
+              ).get("content")
+
+              if not isinstance(content, str) or not content.strip():
+                  raise RuntimeError(
+                      f"{provider} returned no usable text content."
+                  )
+
+              return parse_json_object(content)
+
+          def call_provider(
+              provider,
+              prompt,
+          ):
               if provider == "gemini":
-                  if not os.environ.get("GEMINI_API_KEY"):
-                      raise RuntimeError(
-                          "GEMINI_API_KEY is not configured."
-                      )
-
-                  return extract_gemini_text(
-                      call_gemini(prompt)
-                  )
+                  return call_gemini(prompt)
 
               if provider == "openrouter":
                   api_key = os.environ.get(
@@ -939,7 +931,7 @@ jobs:
                           "OPENROUTER_API_KEY is not configured."
                       )
 
-                  response = call_openai_compatible(
+                  return call_openai_compatible(
                       "OpenRouter",
                       "https://openrouter.ai/api/v1/chat/completions",
                       api_key,
@@ -954,22 +946,15 @@ jobs:
                       },
                   )
 
-                  return extract_openai_text(
-                      response,
-                      "OpenRouter",
-                  )
-
               if provider == "groq":
-                  api_key = os.environ.get(
-                      "GROQ_API_KEY"
-                  )
+                  api_key = os.environ.get("GROQ_API_KEY")
 
                   if not api_key:
                       raise RuntimeError(
                           "GROQ_API_KEY is not configured."
                       )
 
-                  response = call_openai_compatible(
+                  return call_openai_compatible(
                       "Groq",
                       "https://api.groq.com/openai/v1/chat/completions",
                       api_key,
@@ -977,22 +962,15 @@ jobs:
                       prompt,
                   )
 
-                  return extract_openai_text(
-                      response,
-                      "Groq",
-                  )
-
               if provider == "cerebras":
-                  api_key = os.environ.get(
-                      "CEREBRAS_API_KEY"
-                  )
+                  api_key = os.environ.get("CEREBRAS_API_KEY")
 
                   if not api_key:
                       raise RuntimeError(
                           "CEREBRAS_API_KEY is not configured."
                       )
 
-                  response = call_openai_compatible(
+                  return call_openai_compatible(
                       "Cerebras",
                       "https://api.cerebras.ai/v1/chat/completions",
                       api_key,
@@ -1000,22 +978,15 @@ jobs:
                       prompt,
                   )
 
-                  return extract_openai_text(
-                      response,
-                      "Cerebras",
-                  )
-
               if provider == "huggingface":
-                  api_key = os.environ.get(
-                      "HF_TOKEN"
-                  )
+                  api_key = os.environ.get("HF_TOKEN")
 
                   if not api_key:
                       raise RuntimeError(
                           "HF_TOKEN is not configured."
                       )
 
-                  response = call_openai_compatible(
+                  return call_openai_compatible(
                       "Hugging Face",
                       "https://router.huggingface.co/v1/chat/completions",
                       api_key,
@@ -1023,29 +994,131 @@ jobs:
                       prompt,
                   )
 
-                  return extract_openai_text(
-                      response,
-                      "Hugging Face",
-                  )
-
               raise RuntimeError(
                   f"Unknown provider: {provider}"
               )
 
-          PROVIDER_CHAIN = [
-              "gemini",
-              "openrouter",
-              "groq",
-              "cerebras",
-              "huggingface",
-          ]
+          def normalize_text(value):
+              value = re.sub(
+                  r"\\[A-Za-z]+\{([^{}]*)\}",
+                  r"\1",
+                  value,
+              )
+              value = re.sub(
+                  r"[^A-Za-z0-9]+",
+                  " ",
+                  value,
+              )
+              return " ".join(
+                  value.lower().split()
+              )
 
-          def generate_with_fallback(prompt):
+          def replace_profile(tex, new_profile):
+              pattern = re.compile(
+                  r"(\\section\*?\{PROFILE\})(.*?)(?=\\section\*?\{WORK EXPERIENCE\})",
+                  re.IGNORECASE | re.DOTALL,
+              )
+
+              replacement = (
+                  r"\1"
+                  + "\n"
+                  + "\n"
+                  + new_profile.strip()
+                  + "\n\n"
+              )
+
+              updated, count = pattern.subn(
+                  replacement,
+                  tex,
+                  count=1,
+              )
+
+              if count != 1:
+                  raise RuntimeError(
+                      "Could not locate PROFILE section in master resume."
+                  )
+
+              return updated
+
+          def replace_bullets(tex, rewrites):
+              updated = tex
+
+              for rewrite in rewrites:
+                  source = str(
+                      rewrite.get("source", "")
+                  ).strip()
+
+                  replacement = str(
+                      rewrite.get("rewrite", "")
+                  ).strip()
+
+                  if not source or not replacement:
+                      continue
+
+                  source_words = set(
+                      normalize_text(source).split()
+                  )
+
+                  if not source_words:
+                      continue
+
+                  lines = updated.splitlines()
+
+                  best_index = None
+                  best_score = 0.0
+
+                  for i, line in enumerate(lines):
+                      if "\\item" not in line:
+                          continue
+
+                      item_text = line.split(
+                          "\\item",
+                          1
+                      )[1].strip()
+
+                      item_words = set(
+                          normalize_text(item_text).split()
+                      )
+
+                      if not item_words:
+                          continue
+
+                      overlap = len(
+                          source_words & item_words
+                      ) / max(
+                          1,
+                          len(source_words)
+                      )
+
+                      if overlap > best_score:
+                          best_score = overlap
+                          best_index = i
+
+                  if (
+                      best_index is not None
+                      and best_score >= 0.55
+                  ):
+                      prefix = lines[best_index].split(
+                          "\\item",
+                          1
+                      )[0]
+
+                      lines[best_index] = (
+                          prefix
+                          + "\\item "
+                          + replacement
+                      )
+
+                      updated = "\n".join(lines)
+
+              return updated
+
+          def generate_tailoring(prompt):
               errors = []
 
               for provider in PROVIDER_CHAIN:
                   try:
-                      output_text = call_provider(
+                      data = call_provider(
                           provider,
                           prompt,
                       )
@@ -1054,16 +1127,39 @@ jobs:
                           f"Provider succeeded: {provider}"
                       )
 
-                      return output_text, provider
+                      return data, provider
+
+                  except urllib.error.HTTPError as exc:
+                      body = exc.read().decode(
+                          "utf-8",
+                          errors="replace",
+                      )
+
+                      message = (
+                          f"{provider}: HTTP {exc.code}: "
+                          f"{body[:1000]}"
+                      )
+
+                      errors.append(message)
+                      print(
+                          f"Provider failed: {message}"
+                      )
+
+                      # Move to the next provider for transient, quota,
+                      # permission, or unavailable-provider errors.
+                      continue
 
                   except Exception as exc:
-                      errors.append(
+                      message = (
                           f"{provider}: {exc}"
                       )
 
+                      errors.append(message)
                       print(
-                          f"Provider failed: {provider}: {exc}"
+                          f"Provider failed: {message}"
                       )
+
+                      continue
 
               raise RuntimeError(
                   "All providers failed: "
@@ -1077,7 +1173,10 @@ jobs:
               job_id = str(
                   ranked_job.get(
                       "job_id",
-                      ranked_job.get("id", "")
+                      ranked_job.get(
+                          "id",
+                          ""
+                      )
                   )
               )
 
@@ -1086,19 +1185,21 @@ jobs:
                   ranked_job
               )
 
-              company = ranked_job.get(
-                  "company",
-                  ""
-              )
-
               title = ranked_job.get(
                   "title",
                   ""
               )
 
-              job_key = make_job_key(
-                  job_id
+              company = ranked_job.get(
+                  "company",
+                  ""
               )
+
+              job_key = re.sub(
+                  r"[^A-Za-z0-9_-]",
+                  "",
+                  job_id,
+              )[:24]
 
               print(
                   f"[{index}/{len(selected)}] "
@@ -1107,21 +1208,24 @@ jobs:
               )
 
               prompt = f"""
-          You are tailoring a one-page ATS-friendly resume for a Java backend/software engineering candidate.
+          You are a resume-tailoring engine.
 
-          IMPORTANT:
-          - Use ONLY information supported by the master resume.
-          - Do not invent employers, dates, technologies, metrics, responsibilities, certifications, or achievements.
-          - Preserve factual truth.
-          - Tailor wording and ordering to the job description.
-          - Prioritize relevant Java, Spring Boot, backend, microservices, REST API, Redis, SQL, Python/FastAPI/Flask, distributed systems, security, CI/CD, Kafka, and AI/RAG experience only when supported by the master resume.
-          - Keep the resume to one page.
-          - The generated LaTeX must be complete and compile with pdflatex.
-          - Do not use Markdown code fences.
-          - Return valid JSON only.
-          - The "tex" field must contain the complete LaTeX source as a JSON string.
-          - Escape all backslashes, quotes, and newlines according to JSON encoding.
-          - Do not use Markdown code fences.
+          Tailor the candidate's existing one-page resume for the supplied job.
+
+          FACTUAL RULES:
+          - Use ONLY facts in the master resume.
+          - Never invent an employer, date, technology, metric, responsibility,
+            project, certification, or achievement.
+          - Do NOT generate LaTeX.
+          - Return JSON matching the supplied schema.
+          - Rewrite only existing experience/project bullets.
+          - Every "source" must correspond closely to an existing master-resume bullet.
+          - Every "rewrite" must preserve the factual meaning of its source.
+          - The profile_summary must remain fully factual and concise.
+          - Prefer terminology already present in the candidate's resume/skills.
+          - Do not claim a skill merely because the job description requests it.
+          - recommended_skill_order must use only skills already present in the
+            candidate skills/master resume.
 
           CANDIDATE SKILLS:
           {json.dumps(candidate_skills, indent=2, ensure_ascii=False)}
@@ -1158,53 +1262,68 @@ jobs:
               ensure_ascii=False,
           )}
 
-          REQUIRED OUTPUT:
-          1. required_skills
-          2. matched_skills
-          3. missing_skills
-          4. most_relevant_experience_bullets
-          5. most_relevant_projects
-          6. recommended_skill_order
-          7. recommended_profile_focus
-          8. recommended_bullet_rewrites
-          9. tailoring_notes
-          10. tex
+          OUTPUT:
+          - profile_summary: replacement profile paragraph.
+          - experience_bullets: up to 5 source/rewrite pairs.
+          - project_bullets: up to 3 source/rewrite pairs.
+          - recommended_skill_order: relevant existing skills in priority order.
+          - tailoring_notes: concise notes explaining the tailoring choices.
 
-          The "tex" field must:
-          - start with \\documentclass
-          - be a complete LaTeX document
-          - be one-page focused
-          - preserve the candidate's factual information
-          - be optimized for the provided job
-          - compile successfully with pdflatex
+          Do not output Markdown, code fences, or LaTeX.
           """
 
               try:
-                  output_text, provider_used = (
-                      generate_with_fallback(
-                          prompt
+                  tailoring, provider_used = (
+                      generate_tailoring(prompt)
+                  )
+
+                  if not isinstance(
+                      tailoring,
+                      dict
+                  ):
+                      raise RuntimeError(
+                          "Provider returned non-object tailoring data."
                       )
+
+                  profile_summary = tailoring.get(
+                      "profile_summary",
+                      ""
+                  ).strip()
+
+                  if not profile_summary:
+                      raise RuntimeError(
+                          "Provider returned an empty profile_summary."
+                      )
+
+                  tailored_tex = replace_profile(
+                      master_resume,
+                      profile_summary,
                   )
 
-                  result = json.loads(
-                      output_text
+                  tailored_tex = replace_bullets(
+                      tailored_tex,
+                      tailoring.get(
+                          "experience_bullets",
+                          []
+                      ),
                   )
 
-                  tailored_tex = result.get(
-                      "tex"
+                  tailored_tex = replace_bullets(
+                      tailored_tex,
+                      tailoring.get(
+                          "project_bullets",
+                          []
+                      ),
                   )
 
                   if (
-                      not isinstance(
-                          tailored_tex,
-                          str,
-                      )
-                      or not tailored_tex.strip().startswith(
+                      not tailored_tex.strip()
+                      or not tailored_tex.lstrip().startswith(
                           "\\documentclass"
                       )
                   ):
                       raise RuntimeError(
-                          "Gemini returned invalid LaTeX."
+                          "Generated resume source is invalid."
                       )
 
                   tex_path = (
@@ -1225,14 +1344,8 @@ jobs:
                       "job": {
                           "id": job_id,
                           "job_key": job_key,
-                          "title": ranked_job.get(
-                              "title",
-                              ""
-                          ),
-                          "company": ranked_job.get(
-                              "company",
-                              ""
-                          ),
+                          "title": title,
+                          "company": company,
                           "location": ranked_job.get(
                               "location",
                               ""
@@ -1242,47 +1355,13 @@ jobs:
                               ""
                           ),
                       },
+                      "provider": provider_used,
                       "rank": index,
                       "score": ranked_job.get(
                           "score",
                           ""
                       ),
-                      "required_skills": result.get(
-                          "required_skills",
-                          []
-                      ),
-                      "matched_skills": result.get(
-                          "matched_skills",
-                          []
-                      ),
-                      "missing_skills": result.get(
-                          "missing_skills",
-                          []
-                      ),
-                      "most_relevant_experience_bullets": result.get(
-                          "most_relevant_experience_bullets",
-                          []
-                      ),
-                      "most_relevant_projects": result.get(
-                          "most_relevant_projects",
-                          []
-                      ),
-                      "recommended_skill_order": result.get(
-                          "recommended_skill_order",
-                          []
-                      ),
-                      "recommended_profile_focus": result.get(
-                          "recommended_profile_focus",
-                          []
-                      ),
-                      "recommended_bullet_rewrites": result.get(
-                          "recommended_bullet_rewrites",
-                          []
-                      ),
-                      "tailoring_notes": result.get(
-                          "tailoring_notes",
-                          []
-                      ),
+                      **tailoring,
                   }
 
                   tailoring_path.write_text(
@@ -1298,14 +1377,8 @@ jobs:
                       "rank": index,
                       "job_key": job_key,
                       "job_id": job_id,
-                      "title": ranked_job.get(
-                          "title",
-                          ""
-                      ),
-                      "company": ranked_job.get(
-                          "company",
-                          ""
-                      ),
+                      "title": title,
+                      "company": company,
                       "location": ranked_job.get(
                           "location",
                           ""
@@ -1318,16 +1391,12 @@ jobs:
                           "url",
                           ""
                       ),
-                      "tex_path": str(
-                          tex_path
-                      ),
-                      "tailoring_path": str(
-                          tailoring_path
-                      ),
+                      "tex_path": str(tex_path),
+                      "tailoring_path": str(tailoring_path),
                   })
 
                   print(
-                      f"SUCCESS: {job_key}"
+                      f"SUCCESS: {job_key} via {provider_used}"
                   )
 
               except Exception as exc:
@@ -1335,14 +1404,8 @@ jobs:
                       "rank": index,
                       "job_id": job_id,
                       "job_key": job_key,
-                      "title": ranked_job.get(
-                          "title",
-                          ""
-                      ),
-                      "company": ranked_job.get(
-                          "company",
-                          ""
-                      ),
+                      "title": title,
+                      "company": company,
                       "reason": str(exc),
                   })
 
@@ -1352,11 +1415,9 @@ jobs:
 
               if index < len(selected):
                   print(
-                      "Waiting 90 seconds before the next Gemini request..."
+                      "Waiting 90 seconds before the next request..."
                   )
-                  time.sleep(
-                      90
-                  )
+                  time.sleep(90)
 
           Path(
               "jobs/tailoring-results.json"
@@ -1384,9 +1445,7 @@ jobs:
                   f"Only {len(results)} tailored resumes were generated; "
                   f"at least {MINIMUM_JOBS} are required."
               )
-          PY
-
-      - name: Compile tailored resumes
+          PY      - name: Compile tailored resumes
         run: |
           sudo apt-get update
           sudo apt-get install -y texlive-latex-extra poppler-utils
