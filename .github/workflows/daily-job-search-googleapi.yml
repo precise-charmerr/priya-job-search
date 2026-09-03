@@ -618,6 +618,9 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           python - <<'PY'
           import json
@@ -702,272 +705,122 @@ jobs:
                   raw,
               )[:24]
 
-          def extract_text(api_response):
+          RESPONSE_SCHEMA = {
+              "type": "object",
+              "properties": {
+                  "required_skills": {
+                      "type": "array",
+                      "items": {"type": "string"}
+                  },
+                  "matched_skills": {
+                      "type": "array",
+                      "items": {"type": "string"}
+                  },
+                  "missing_skills": {
+                      "type": "array",
+                      "items": {"type": "string"}
+                  },
+                  "most_relevant_experience_bullets": {
+                      "type": "array",
+                      "items": {"type": "string"}
+                  },
+                  "most_relevant_projects": {
+                      "type": "array",
+                      "items": {"type": "string"}
+                  },
+                  "recommended_skill_order": {
+                      "type": "array",
+                      "items": {"type": "string"}
+                  },
+                  "recommended_profile_focus": {
+                      "type": "array",
+                      "items": {"type": "string"}
+                  },
+                  "recommended_bullet_rewrites": {
+                      "type": "array",
+                      "items": {"type": "string"}
+                  },
+                  "tailoring_notes": {
+                      "type": "array",
+                      "items": {"type": "string"}
+                  },
+                  "tex": {
+                      "type": "string"
+                  }
+              },
+              "required": [
+                  "required_skills",
+                  "matched_skills",
+                  "missing_skills",
+                  "most_relevant_experience_bullets",
+                  "most_relevant_projects",
+                  "recommended_skill_order",
+                  "recommended_profile_focus",
+                  "recommended_bullet_rewrites",
+                  "tailoring_notes",
+                  "tex"
+              ],
+              "additionalProperties": False
+          }
+
+          def extract_gemini_text(api_response):
               candidates = api_response.get(
                   "candidates",
                   []
               )
 
               if not candidates:
-                  print(
-                      "----- Gemini response diagnostic -----"
-                  )
-                  print(
-                      f"response_keys: {list(api_response.keys())}"
-                  )
-                  print(
-                      json.dumps(
-                          api_response,
-                          indent=2,
-                          ensure_ascii=False,
-                      )[:6000]
-                  )
-                  print(
-                      "----- end Gemini response diagnostic -----"
-                  )
                   raise RuntimeError(
                       "Gemini returned no candidates."
                   )
 
-              candidate = candidates[0]
-              content = candidate.get(
+              parts = candidates[0].get(
                   "content",
                   {}
-              )
-
-              parts = content.get(
+              ).get(
                   "parts",
                   []
               )
 
-              text_parts = [
+              output = "".join(
                   part.get("text", "")
                   for part in parts
                   if isinstance(part, dict)
                   and isinstance(part.get("text"), str)
-              ]
-
-              output = "".join(text_parts)
+              )
 
               if output.strip():
                   return output
-
-              print(
-                  "----- Gemini response diagnostic -----"
-              )
-              print(
-                  f"model: {api_response.get('modelVersion')}"
-              )
-              print(
-                  f"finish_reason: {candidate.get('finishReason')}"
-              )
-              print(
-                  f"content_parts: {len(parts)}"
-              )
-              print(
-                  f"usage_metadata: {api_response.get('usageMetadata')}"
-              )
-              print(
-                  json.dumps(
-                      api_response,
-                      indent=2,
-                      ensure_ascii=False,
-                  )[:6000]
-              )
-              print(
-                  "----- end Gemini response diagnostic -----"
-              )
 
               raise RuntimeError(
                   "Gemini response did not contain text content."
               )
 
-          def call_openrouter(prompt):
-              payload = {
-                  "model": "openrouter/free",
-                  "messages": [
-                      {
-                          "role": "user",
-                          "content": prompt,
-                      }
-                  ],
-                  "response_format": {
-                      "type": "json_schema",
-                      "json_schema": {
-                          "name": "tailored_resume",
-                          "strict": True,
-                          "schema": {
-                              "type": "object",
-                              "properties": {
-                                  "required_skills": {
-                                      "type": "array",
-                                      "items": {"type": "string"}
-                                  },
-                                  "matched_skills": {
-                                      "type": "array",
-                                      "items": {"type": "string"}
-                                  },
-                                  "missing_skills": {
-                                      "type": "array",
-                                      "items": {"type": "string"}
-                                  },
-                                  "most_relevant_experience_bullets": {
-                                      "type": "array",
-                                      "items": {"type": "string"}
-                                  },
-                                  "most_relevant_projects": {
-                                      "type": "array",
-                                      "items": {"type": "string"}
-                                  },
-                                  "recommended_skill_order": {
-                                      "type": "array",
-                                      "items": {"type": "string"}
-                                  },
-                                  "recommended_profile_focus": {
-                                      "type": "array",
-                                      "items": {"type": "string"}
-                                  },
-                                  "recommended_bullet_rewrites": {
-                                      "type": "array",
-                                      "items": {"type": "string"}
-                                  },
-                                  "tailoring_notes": {
-                                      "type": "array",
-                                      "items": {"type": "string"}
-                                  },
-                                  "tex": {
-                                      "type": "string"
-                                  }
-                              },
-                              "required": [
-                                  "required_skills",
-                                  "matched_skills",
-                                  "missing_skills",
-                                  "most_relevant_experience_bullets",
-                                  "most_relevant_projects",
-                                  "recommended_skill_order",
-                                  "recommended_profile_focus",
-                                  "recommended_bullet_rewrites",
-                                  "tailoring_notes",
-                                  "tex"
-                              ],
-                              "additionalProperties": False
-                          }
-                      }
-                  },
-                  "max_tokens": 12000,
-              }
-
-              request = urllib.request.Request(
-                  "https://openrouter.ai/api/v1/chat/completions",
-                  data=json.dumps(payload).encode("utf-8"),
-                  headers={
-                      "Authorization": f"Bearer {os.environ.get('OPENROUTER_API_KEY', '')}",
-                      "Content-Type": "application/json",
-                      "HTTP-Referer": "https://github.com/precise-charmerr/priya-job-search",
-                      "X-Title": "Priya Job Search",
-                  },
-                  method="POST",
+          def extract_openai_text(api_response, provider):
+              choices = api_response.get(
+                  "choices",
+                  []
               )
-
-              with urllib.request.urlopen(
-                  request,
-                  timeout=180,
-              ) as response:
-                  raw = response.read().decode("utf-8")
-
-              response_json = json.loads(raw)
-              choices = response_json.get("choices", [])
 
               if not choices:
                   raise RuntimeError(
-                      "OpenRouter returned no choices."
+                      f"{provider} returned no choices."
                   )
 
-              content = choices[0].get(
+              message = choices[0].get(
                   "message",
                   {}
-              ).get("content")
-
-              if not isinstance(content, str) or not content.strip():
-                  raise RuntimeError(
-                      "OpenRouter returned no usable text content."
-                  )
-
-              return response_json
-
-          def call_provider(prompt, preferred_provider):
-              # Primary provider is selected per job. A retryable provider failure
-              # falls back to the other configured provider for that same job.
-              providers = (
-                  ["gemini", "openrouter"]
-                  if preferred_provider == "gemini"
-                  else ["openrouter", "gemini"]
               )
 
-              errors = []
-
-              for provider in providers:
-                  try:
-                      if provider == "gemini":
-                          api_response = call_gemini(prompt)
-                          output_text = extract_text(api_response)
-                          return output_text, provider
-
-                      api_response = call_openrouter(prompt)
-                      output_text = extract_text_openrouter(
-                          api_response
-                      )
-                      return output_text, provider
-
-                  except urllib.error.HTTPError as exc:
-                      body = exc.read().decode(
-                          "utf-8",
-                          errors="replace",
-                      )
-
-                      errors.append(
-                          f"{provider} HTTP {exc.code}: {body[:1000]}"
-                      )
-
-                      if exc.code not in {
-                          408,
-                          429,
-                          500,
-                          502,
-                          503,
-                          504,
-                      }:
-                          break
-
-                  except Exception as exc:
-                      errors.append(
-                          f"{provider}: {exc}"
-                      )
-
-              raise RuntimeError(
-                  "All configured providers failed: "
-                  + " | ".join(errors)
+              content = message.get(
+                  "content"
               )
-
-          def extract_text_openrouter(api_response):
-              choices = api_response.get("choices", [])
-
-              if not choices:
-                  raise RuntimeError(
-                      "OpenRouter returned no choices."
-                  )
-
-              content = choices[0].get(
-                  "message",
-                  {}
-              ).get("content")
 
               if isinstance(content, str) and content.strip():
                   return content
 
               raise RuntimeError(
-                  "OpenRouter returned no usable text content."
+                  f"{provider} returned no usable text content."
               )
 
           def call_gemini(prompt):
@@ -991,7 +844,7 @@ jobs:
               endpoint = (
                   "https://generativelanguage.googleapis.com/"
                   "v1beta/models/gemini-3.7-flash:generateContent"
-                  f"?key={api_key}"
+                  f"?key={os.environ['GEMINI_API_KEY']}"
               )
 
               request = urllib.request.Request(
@@ -1005,83 +858,216 @@ jobs:
                   method="POST",
               )
 
-              last_error = None
+              with urllib.request.urlopen(
+                  request,
+                  timeout=180,
+              ) as response:
+                  return json.loads(
+                      response.read().decode("utf-8")
+                  )
 
-              for attempt in range(5):
+          def call_openai_compatible(
+              provider,
+              endpoint,
+              api_key,
+              model,
+              prompt,
+              extra_headers=None,
+          ):
+              payload = {
+                  "model": model,
+                  "messages": [
+                      {
+                          "role": "user",
+                          "content": prompt,
+                      }
+                  ],
+                  "response_format": {
+                      "type": "json_schema",
+                      "json_schema": {
+                          "name": "tailored_resume",
+                          "strict": True,
+                          "schema": RESPONSE_SCHEMA,
+                      }
+                  },
+                  "max_tokens": 12000,
+              }
+
+              headers = {
+                  "Authorization": f"Bearer {api_key}",
+                  "Content-Type": "application/json",
+              }
+
+              if extra_headers:
+                  headers.update(extra_headers)
+
+              request = urllib.request.Request(
+                  endpoint,
+                  data=json.dumps(
+                      payload
+                  ).encode("utf-8"),
+                  headers=headers,
+                  method="POST",
+              )
+
+              with urllib.request.urlopen(
+                  request,
+                  timeout=180,
+              ) as response:
+                  return json.loads(
+                      response.read().decode("utf-8")
+                  )
+
+          def call_provider(provider, prompt):
+              if provider == "gemini":
+                  if not os.environ.get("GEMINI_API_KEY"):
+                      raise RuntimeError(
+                          "GEMINI_API_KEY is not configured."
+                      )
+
+                  return extract_gemini_text(
+                      call_gemini(prompt)
+                  )
+
+              if provider == "openrouter":
+                  api_key = os.environ.get(
+                      "OPENROUTER_API_KEY"
+                  )
+
+                  if not api_key:
+                      raise RuntimeError(
+                          "OPENROUTER_API_KEY is not configured."
+                      )
+
+                  response = call_openai_compatible(
+                      "OpenRouter",
+                      "https://openrouter.ai/api/v1/chat/completions",
+                      api_key,
+                      "openrouter/free",
+                      prompt,
+                      {
+                          "HTTP-Referer": (
+                              "https://github.com/"
+                              "precise-charmerr/priya-job-search"
+                          ),
+                          "X-Title": "Priya Job Search",
+                      },
+                  )
+
+                  return extract_openai_text(
+                      response,
+                      "OpenRouter",
+                  )
+
+              if provider == "groq":
+                  api_key = os.environ.get(
+                      "GROQ_API_KEY"
+                  )
+
+                  if not api_key:
+                      raise RuntimeError(
+                          "GROQ_API_KEY is not configured."
+                      )
+
+                  response = call_openai_compatible(
+                      "Groq",
+                      "https://api.groq.com/openai/v1/chat/completions",
+                      api_key,
+                      "openai/gpt-oss-120b",
+                      prompt,
+                  )
+
+                  return extract_openai_text(
+                      response,
+                      "Groq",
+                  )
+
+              if provider == "cerebras":
+                  api_key = os.environ.get(
+                      "CEREBRAS_API_KEY"
+                  )
+
+                  if not api_key:
+                      raise RuntimeError(
+                          "CEREBRAS_API_KEY is not configured."
+                      )
+
+                  response = call_openai_compatible(
+                      "Cerebras",
+                      "https://api.cerebras.ai/v1/chat/completions",
+                      api_key,
+                      "gpt-oss-120b",
+                      prompt,
+                  )
+
+                  return extract_openai_text(
+                      response,
+                      "Cerebras",
+                  )
+
+              if provider == "huggingface":
+                  api_key = os.environ.get(
+                      "HF_TOKEN"
+                  )
+
+                  if not api_key:
+                      raise RuntimeError(
+                          "HF_TOKEN is not configured."
+                      )
+
+                  response = call_openai_compatible(
+                      "Hugging Face",
+                      "https://router.huggingface.co/v1/chat/completions",
+                      api_key,
+                      "Qwen/Qwen3-32B",
+                      prompt,
+                  )
+
+                  return extract_openai_text(
+                      response,
+                      "Hugging Face",
+                  )
+
+              raise RuntimeError(
+                  f"Unknown provider: {provider}"
+              )
+
+          PROVIDER_CHAIN = [
+              "gemini",
+              "openrouter",
+              "groq",
+              "cerebras",
+              "huggingface",
+          ]
+
+          def generate_with_fallback(prompt):
+              errors = []
+
+              for provider in PROVIDER_CHAIN:
                   try:
-                      with urllib.request.urlopen(
-                          request,
-                          timeout=180,
-                      ) as response:
-                          raw = response.read().decode(
-                              "utf-8"
-                          )
-
-                      return json.loads(raw)
-
-                  except urllib.error.HTTPError as exc:
-                      body = exc.read().decode(
-                          "utf-8",
-                          errors="replace",
+                      output_text = call_provider(
+                          provider,
+                          prompt,
                       )
 
-                      last_error = (
-                          f"HTTP {exc.code}: {body[:2000]}"
+                      print(
+                          f"Provider succeeded: {provider}"
                       )
 
-                      if exc.code in {
-                          429,
-                          500,
-                          502,
-                          503,
-                          504,
-                      } and attempt < 4:
-                          sleep_seconds = (
-                              2 ** attempt
-                          )
+                      return output_text, provider
 
-                          print(
-                              f"Gemini HTTP {exc.code}; "
-                              f"retrying in {sleep_seconds}s..."
-                          )
-
-                          time.sleep(
-                              sleep_seconds
-                          )
-                          continue
-
-                      raise RuntimeError(
-                          last_error
+                  except Exception as exc:
+                      errors.append(
+                          f"{provider}: {exc}"
                       )
 
-                  except (
-                      urllib.error.URLError,
-                      TimeoutError,
-                  ) as exc:
-                      last_error = str(exc)
-
-                      if attempt < 4:
-                          sleep_seconds = (
-                              2 ** attempt
-                          )
-
-                          print(
-                              "Gemini network error; "
-                              f"retrying in {sleep_seconds}s..."
-                          )
-
-                          time.sleep(
-                              sleep_seconds
-                          )
-                          continue
-
-                      raise RuntimeError(
-                          last_error
+                      print(
+                          f"Provider failed: {provider}: {exc}"
                       )
 
               raise RuntimeError(
-                  last_error or
-                  "Gemini request failed."
+                  "All providers failed: "
+                  + " | ".join(errors)
               )
 
           for index, ranked_job in enumerate(
@@ -1194,23 +1180,14 @@ jobs:
           """
 
               try:
-                  preferred_provider = (
-                      "gemini"
-                      if index % 2 == 1
-                      else "openrouter"
-                  )
-
-                  output_text, provider_used = call_provider(
-                      prompt,
-                      preferred_provider,
+                  output_text, provider_used = (
+                      generate_with_fallback(
+                          prompt
+                      )
                   )
 
                   result = json.loads(
                       output_text
-                  )
-
-                  print(
-                      f"Provider used: {provider_used}"
                   )
 
                   tailored_tex = result.get(
