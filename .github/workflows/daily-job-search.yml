@@ -1213,7 +1213,7 @@ jobs:
           except (json.JSONDecodeError, KeyError, TypeError) as exc:
               print("Raw model output:")
               print(output_text)
-              raise RuntimeError("Gemini did not return the expected {"tex": ...} JSON.") from exc
+              raise RuntimeError('Gemini did not return the expected {"tex": ...} JSON.') from exc
 
           if not tailored_tex.strip().startswith("\\documentclass"):
               raise RuntimeError("Generated LaTeX does not start with \\documentclass.")
